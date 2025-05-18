@@ -1,0 +1,37 @@
+[package]
+name = "bq769x0-async-rs"
+version = "0.1.1"
+authors = ["Ivan Li <ivanli2048@gmail.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "A BQ769x0 driver based on embedded-hal. Support `async` and `sync` features."
+keywords = ["battery-management", "embedded-hal-driver", "no-std", "bq769x0", "async"]
+repository = "https://github.com/IvanLi-CN/bq769x0-async-rs"
+
+[dependencies]
+embedded-hal = "1.0.0"
+embedded-hal-async = { version = "1.0.0", optional = true }
+maybe-async-cfg = "0.2.5"
+
+[dev-dependencies]
+embedded-hal-mock = "0.8.0"
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = 0
+
+[profile.release]
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
+
+[features]
+async = ["dep:embedded-hal-async"]
+bq76920 = []
+bq76930 = []
+bq76940 = []
