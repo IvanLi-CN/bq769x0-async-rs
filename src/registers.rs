@@ -1,3 +1,4 @@
+#[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum Register {
     /// System Status Register
@@ -135,17 +136,18 @@ pub const SYS_CTRL2_CC_ONESHOT: u8 = 1 << 5;
 pub const SYS_CTRL2_DSG_ON: u8 = 1 << 1;
 pub const SYS_CTRL2_CHG_ON: u8 = 1 << 0;
 
-// PROTECT1 register bit masks (SCD) - Placeholder, refer to datasheet for exact bits
-pub const PROTECT1_SCD_THRESH: u8 = 0b1110_0000; // Example: Bits 7-5 for SCD Threshold
-pub const PROTECT1_SCD_DELAY: u8 = 0b0001_1100;  // Example: Bits 4-2 for SCD Delay
+// PROTECT1 register bit masks (SCD)
+pub const PROTECT1_RSNS: u8 = 1 << 7; // RSNS bit
+pub const PROTECT1_SCD_DELAY: u8 = 0b11 << 3; // SCD_D1:0 bits
+pub const PROTECT1_SCD_THRESH: u8 = 0b111 << 0; // SCD_T2:0 bits
 
-// PROTECT2 register bit masks (OCD) - Placeholder, refer to datasheet for exact bits
-pub const PROTECT2_OCD_THRESH: u8 = 0b1111_0000; // Example: Bits 7-4 for OCD Threshold
-pub const PROTECT2_OCD_DELAY: u8 = 0b0000_1110;  // Example: Bits 3-1 for OCD Delay
+// PROTECT2 register bit masks (OCD)
+pub const PROTECT2_OCD_DELAY: u8 = 0b111 << 4; // OCD_D2:0 bits
+pub const PROTECT2_OCD_THRESH: u8 = 0b1111 << 0; // OCD_T3:0 bits
 
-// PROTECT3 register bit masks (OV/UV Delay) - Placeholder, refer to datasheet for exact bits
-pub const PROTECT3_OV_DELAY: u8 = 0b1111_0000;   // Example: Bits 7-4 for OV Delay
-pub const PROTECT3_UV_DELAY: u8 = 0b0000_1111;   // Example: Bits 3-0 for UV Delay
+// PROTECT3 register bit masks (OV/UV Delay)
+pub const PROTECT3_UV_DELAY: u8 = 0b11 << 6; // UV_D1:0 bits
+pub const PROTECT3_OV_DELAY: u8 = 0b11 << 4; // OV_D1:0 bits
 
 // CELLBAL1 register bit masks (Cells 1-5)
 pub const CELLBAL1_BAL1: u8 = 1 << 0;
@@ -167,3 +169,11 @@ pub const CELLBAL3_BAL12: u8 = 1 << 1;
 pub const CELLBAL3_BAL13: u8 = 1 << 2;
 pub const CELLBAL3_BAL14: u8 = 1 << 3;
 pub const CELLBAL3_BAL15: u8 = 1 << 4;
+
+// Number of cells
+#[cfg(feature = "bq76920")]
+pub const NUM_CELLS: usize = 5;
+#[cfg(feature = "bq76930")]
+pub const NUM_CELLS: usize = 10;
+#[cfg(feature = "bq76940")]
+pub const NUM_CELLS: usize = 15;
