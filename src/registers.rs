@@ -115,12 +115,14 @@ pub enum Register {
 
 // SYS_STAT register bit masks
 pub const SYS_STAT_CC_READY: u8 = 1 << 7;
-pub const SYS_STAT_DEVICE_XREADY: u8 = 1 << 5;
-pub const SYS_STAT_OVRD_ALERT: u8 = 1 << 4;
-pub const SYS_STAT_UV: u8 = 1 << 3;
-pub const SYS_STAT_OV: u8 = 1 << 2;
-pub const SYS_STAT_SCD: u8 = 1 << 1;
-pub const SYS_STAT_OCD: u8 = 1 << 0;
+pub const SYS_STAT_OVR_TEMP: u8 = 1 << 6; // Overtemperature
+pub const SYS_STAT_OVRD_ALERT: u8 = 1 << 4; // External Alert Override
+pub const SYS_STAT_UV: u8 = 1 << 5; // Undervoltage
+pub const SYS_STAT_OV: u8 = 1 << 4; // Overvoltage
+pub const SYS_STAT_SCD: u8 = 1 << 3; // Short Circuit Discharge
+pub const SYS_STAT_OCD: u8 = 1 << 2; // Overcurrent Discharge
+pub const SYS_STAT_CUV: u8 = 1 << 1; // Cell Undervoltage
+pub const SYS_STAT_COV: u8 = 1 << 0; // Cell Overvoltage
 
 // SYS_CTRL1 register bit masks
 pub const SYS_CTRL1_LOAD_PRESENT: u8 = 1 << 7;
@@ -139,11 +141,11 @@ pub const SYS_CTRL2_CHG_ON: u8 = 1 << 0;
 // PROTECT1 register bit masks (SCD)
 pub const PROTECT1_RSNS: u8 = 1 << 7; // RSNS bit
 pub const PROTECT1_SCD_DELAY: u8 = 0b11 << 3; // SCD_D1:0 bits
-pub const PROTECT1_SCD_THRESH: u8 = 0b111 << 0; // SCD_T2:0 bits
+pub const PROTECT1_SCD_THRESH: u8 = 0b111; // SCD_T2:0 bits
 
 // PROTECT2 register bit masks (OCD)
 pub const PROTECT2_OCD_DELAY: u8 = 0b111 << 4; // OCD_D2:0 bits
-pub const PROTECT2_OCD_THRESH: u8 = 0b1111 << 0; // OCD_T3:0 bits
+pub const PROTECT2_OCD_THRESH: u8 = 0b1111; // OCD_T3:0 bits
 
 // PROTECT3 register bit masks (OV/UV Delay)
 pub const PROTECT3_UV_DELAY: u8 = 0b11 << 6; // UV_D1:0 bits

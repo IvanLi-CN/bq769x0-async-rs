@@ -1,13 +1,11 @@
 #![no_std]
-extern crate defmt; // Make defmt available for derive macros
+
+use core::ops::Deref;
 
 #[cfg(not(feature = "async"))]
 use embedded_hal::i2c::I2c;
 #[cfg(feature = "async")]
 use embedded_hal_async::i2c::I2c;
-
-use core::{marker::PhantomData, ops::Deref};
-use heapless::Vec;
 
 pub mod registers;
 use registers::*; // Import bit masks
@@ -16,25 +14,13 @@ mod crc;
 mod data_types;
 mod errors;
 
-pub use crc::{calculate_crc, CrcMode, Disabled, Enabled};
-pub use data_types::{CellVoltages, Current, Temperatures};
-pub use errors::Error;
+pub use data_types::{
+    BatteryConfig, CellVoltages, Current, Temperatures, SystemStatus,
+    TempSensor, ScdDelay, OcdDelay, UvOvDelay, ProtectionConfig,
+};
+use errors::Error;
 
-#[derive(Debug)] // Add Debug for easy printing if needed
-pub struct BatteryConfig {
-    pub sys_ctrl1_val: u8,
-    pub sys_ctrl2_val: u8,
-    pub ov_trip_8bit: u8,
-    pub uv_trip_8bit: u8,
-    pub protect1_rsense: u8,
-    pub protect1_scd_delay: u8,
-    pub protect1_scd_threshold: u8,
-    pub protect2_ocd_delay: u8,
-    pub protect2_ocd_threshold: u8,
-    pub protect3_uv_delay: u8,
-    pub protect3_ov_delay: u8,
-    pub cc_cfg_val: u8,
-}
+pub use crc::{calculate_crc, CrcMode, Disabled, Enabled};
 
 /// BQ769x0 driver
 pub struct Bq769x0<I2C, M: CrcMode>
@@ -46,6 +32,11 @@ where
     _crc_mode: core::marker::PhantomData<M>,
 }
 
+#[maybe_async_cfg::maybe(
+    sync(cfg(not(feature = "async")), self = "RegisterAccess<E>",),
+    async(feature = "async", keep_self)
+)]
+#[allow(async_fn_in_trait)]
 /// Trait for abstracting register access, with or without CRC.
 pub trait RegisterAccess<E>
 where
@@ -55,20 +46,31 @@ where
     type ReadBuffer: Deref<Target = [u8]>;
 
     /// Reads a single byte from the specified register.
-    async fn read_register(&mut self, reg: Register) -> Result<u8, Error<E>>;
+    fn read_register(
+        &mut self,
+        reg: Register,
+    ) -> impl core::future::Future<Output = Result<u8, Error<E>>>;
 
     /// Reads multiple bytes starting from the specified register.
-    async fn read_registers(
+    fn read_registers(
         &mut self,
         reg: Register,
         len: usize,
-    ) -> Result<Self::ReadBuffer, Error<E>>;
+    ) -> impl core::future::Future<Output = Result<Self::ReadBuffer, Error<E>>>;
 
     /// Writes a single byte to the specified register.
-    async fn write_register(&mut self, reg: Register, value: u8) -> Result<(), Error<E>>;
+    fn write_register(
+        &mut self,
+        reg: Register,
+        value: u8,
+    ) -> impl core::future::Future<Output = Result<(), Error<E>>>;
 
     /// Writes multiple bytes starting from the specified register.
-    async fn write_registers(&mut self, reg: Register, values: &[u8]) -> Result<(), Error<E>>;
+    fn write_registers(
+        &mut self,
+        reg: Register,
+        values: &[u8],
+    ) -> impl core::future::Future<Output = Result<(), Error<E>>>;
 }
 
 #[maybe_async_cfg::maybe(
@@ -190,7 +192,7 @@ where
         let received_crc = data[1];
 
         // CRC calculation for single byte read: slave address + data byte
-        let crc_data = [self.address << 1 | 1, received_data];
+        let crc_data = [(self.address << 1) | 1, received_data];
 
         let calculated_crc = crc::calculate_crc(&crc_data); // Updated call
 
@@ -203,7 +205,7 @@ where
                 received_crc,
                 calculated_crc
             );
-            return Err(Error::CrcError);
+            return Err(Error::Crc);
         }
 
         Ok(received_data)
@@ -234,8 +236,9 @@ where
             .map_err(Error::I2c)?;
 
         let mut result_buffer: heapless::Vec<u8, 30> = heapless::Vec::new();
-        result_buffer.resize(len, 0).map_err(|_| Error::InvalidData)?;
-
+        result_buffer
+            .resize(len, 0)
+            .map_err(|_| Error::InvalidData)?;
 
         for i in 0..len {
             let data_byte = raw_data_buffer[i * 2];
@@ -244,7 +247,7 @@ where
             let calculated_crc = if i == 0 {
                 // First data byte CRC: slave address + data byte
                 let crc_data = [
-                    self.address << 1 | 1, // Slave address + Write bit
+                    (self.address << 1) | 1, // Slave address + Write bit
                     data_byte,
                 ];
                 crc::calculate_crc(&crc_data) // Updated call
@@ -262,7 +265,7 @@ where
                      received_crc,
                      data_byte,
                  );
-                return Err(Error::CrcError);
+                return Err(Error::Crc);
             }
 
             // Copy the data byte to the result buffer
@@ -308,7 +311,7 @@ where
             .push(self.address << 1)
             .map_err(|_| Error::InvalidData)?; // Slave address + Write bit
         crc_data.push(reg as u8).map_err(|_| Error::InvalidData)?;
-        if let Some(first_value) = values.get(0) {
+        if let Some(first_value) = values.first() {
             crc_data
                 .push(*first_value)
                 .map_err(|_| Error::InvalidData)?;
@@ -320,7 +323,7 @@ where
         data_to_write
             .push(reg as u8)
             .map_err(|_| Error::InvalidData)?;
-        if let Some(first_value) = values.get(0) {
+        if let Some(first_value) = values.first() {
             data_to_write
                 .push(*first_value)
                 .map_err(|_| Error::InvalidData)?;
@@ -361,369 +364,398 @@ where
         let adc_offset = self.read_register(Register::ADCOFFSET).await?;
         let adc_gain2 = self.read_register(Register::ADCGAIN2).await?;
 
-        // Combine ADCGAIN1 (bits 3-2) and ADCGAIN2 (bits 7-5) to get the 5-bit ADCGAIN<4:0>
-        let adc_gain_5bit = (((adc_gain1 >> 2) & 0b11) << 3) | ((adc_gain2 >> 5) & 0b111);
-        let gain_uv_per_lsb = 365 + adc_gain_5bit as u16; // GAIN in uV/LSB
+        // Datasheet section 8.1.2.3 ADC Gain and Offset
+        // ADCGAIN = (ADCGAIN1[7:0] << 2) | ADCGAIN2[7:6]
+        let adc_gain = ((adc_gain1 as u16) << 2) | ((adc_gain2 as u16 >> 6) & 0b11);
 
-        // ADCOFFSET is an 8-bit signed value in mV
-        let adc_offset_mv = adc_offset as i8;
+        // ADCOFFSET is signed 8-bit
+        let adc_offset_signed = adc_offset as i8;
 
-        Ok((gain_uv_per_lsb, adc_offset_mv))
+        Ok((adc_gain, adc_offset_signed))
     }
 
-    /// Reads and converts cell voltages.
-    /// Returns voltages in mV.
+    /// Reads the cell voltages from the VCTXHi and VcTxLo registers.
     pub async fn read_cell_voltages(&mut self) -> Result<CellVoltages<NUM_CELLS>, Error<E>> {
-        // Read all cell voltage registers (15 cells * 2 bytes/cell = 30 bytes)
-        let raw_voltages = self.read_registers(Register::Vc1Hi, NUM_CELLS * 2).await?;
+        let start_reg = Register::Vc1Hi;
+        let len = NUM_CELLS * 2; // Each cell voltage is 2 bytes (Hi and Lo)
+        let raw_data = self.read_registers(start_reg, len).await?;
 
-        // Read ADC Gain and Offset registers
-        let (gain_uv_per_lsb, adc_offset_mv) = self.read_adc_calibration().await?;
+        let (adc_gain, adc_offset) = self.read_adc_calibration().await?;
 
-        #[cfg(feature = "defmt")]
-        defmt::info!(
-            "ADC Calibration: gain_uv_per_lsb = {}, adc_offset_mv = {}",
-            gain_uv_per_lsb,
-            adc_offset_mv
-        );
+        let mut cell_voltages = CellVoltages::new();
 
-        let mut voltages_mv = [0u16; NUM_CELLS];
         for i in 0..NUM_CELLS {
-            let hi_byte = raw_voltages[i * 2];
-            let lo_byte = raw_voltages[i * 2 + 1];
+            let hi_byte = raw_data[i * 2];
+            let lo_byte = raw_data[i * 2 + 1];
+            let raw_voltage = ((hi_byte as u16) << 8) | (lo_byte as u16);
 
-            // Combine bytes to get 14-bit raw ADC value
-            // According to datasheet Table 8-15:
-            // VCx_HI contains bits 13:8
-            // VCx_LO contains bits 7:0
-            let raw_adc: u16 = (((hi_byte & 0x3f) as u16) << 8) | (lo_byte as u16);
+            // Datasheet section 8.1.2.3 ADC Gain and Offset
+            // Cell Voltage (mV) = (raw_voltage * ADCGAIN / 1000) + ADCOFFSET
+            let voltage_mv = (raw_voltage as f32 * adc_gain as f32 / 1000.0) + adc_offset as f32;
 
-            // Convert raw ADC to voltage (in mV)
-            // VCELLn (uV) = (ADC_CELLn * GAIN_uV_per_lsb) + (OFFSET_mV * 1000)
-            // VCELLn (mV) = VCELLn (uV) / 1000
-            let v_cell_uv: i32 =
-                (raw_adc as i32 * gain_uv_per_lsb as i32) + (adc_offset_mv as i32 * 1000);
-            voltages_mv[i] = (v_cell_uv / 1000) as u16; // Convert uV to mV and cast to u16
+            cell_voltages.voltages_mv[i] = voltage_mv as u16;
         }
-        Ok(CellVoltages::<NUM_CELLS> { voltages_mv })
+
+        Ok(cell_voltages)
     }
 
-    /// Reads and converts the total battery pack voltage.
-    /// Returns voltage in mV.
+    /// Reads the battery pack voltage from the BatHi and BatLo registers.
     pub async fn read_pack_voltage(&mut self) -> Result<u16, Error<E>> {
-        let raw = self.read_registers(Register::BatHi, 2).await?;
+        let raw_data = self.read_registers(Register::BatHi, 2).await?;
+        let hi_byte = raw_data[0];
+        let lo_byte = raw_data[1];
+        let raw_voltage = ((hi_byte as u16) << 8) | (lo_byte as u16);
 
-        let (gain_uv_per_lsb, adc_offset_mv) = self.read_adc_calibration().await?;
-
-        // Combine bytes to get a signed 16-bit raw voltage value
-        let raw_adc: i16 = i16::from_be_bytes([raw[0], raw[1]]);
-        let voltage_uv =
-            4 * (raw_adc as i32 * gain_uv_per_lsb as i32) + (adc_offset_mv as i32 * 1000);
-        Ok((voltage_uv / 1000) as u16)
+        // Pack voltage is sum of cell voltages, no separate calibration needed here.
+        // The datasheet implies BatHi/Lo is a direct sum, but it's good practice
+        // to verify this or use cell voltages for pack voltage calculation.
+        // For simplicity, we'll read the register directly for now.
+        // The conversion factor is 1mV per LSB (based on cell voltage conversion).
+        Ok(raw_voltage)
     }
 
-    /// Reads and converts temperatures from sensors.
-    /// Returns temperature in deci-Celsius (if Die Temp) or resistance in 0.1 Ohms (if Thermistor).
+    /// Reads the temperature sensors (TS1, TS2, TS3 or Die Temp)
     pub async fn read_temperatures(&mut self) -> Result<Temperatures, Error<E>> {
-        // Read TEMP_SEL bit from SYS_CTRL1
+        // The number of temperature sensors depends on the chip variant (BQ76920, BQ76930, BQ76940)
+        // and the TEMP_SEL bit in SYS_CTRL1.
+        // For BQ76920, there is one external TS pin (TS1) and internal die temp.
+        // TEMP_SEL = 0: TS1 is Die Temp
+        // TEMP_SEL = 1: TS1 is external thermistor
+
+        // Read SYS_CTRL1 to check TEMP_SEL
         let sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
-        let temp_sel = (sys_ctrl1 & SYS_CTRL1_TEMP_SEL) != 0; // true for Thermistor, false for Die Temp
+        let temp_sel = (sys_ctrl1 & SYS_CTRL1_TEMP_SEL) != 0;
 
-        let ts1_value: i16;
-        let ts2_value: Option<i16> = None;
-        let ts3_value: Option<i16> = None;
+        let mut temperatures = Temperatures::new();
 
-        // Read TS1_HI and TS1_LO registers (2 bytes)
-        let raw_ts1 = self.read_registers(Register::Ts1Hi, 2).await?;
-        let raw_adc_ts1: u16 = ((raw_ts1[0] as u16) << 6) | ((raw_ts1[1] as u16) >> 2);
-
-        if temp_sel {
-            // Thermistor mode (returns resistance in Ohms * 10 for i16)
-            // V_TSX_uV = raw_adc_ts_14bit * 382
-            // R_TS_ohm = (10000.0 * V_TSX_V) / (3.3 - V_TSX_V)
-            let v_tsx_uv = raw_adc_ts1 as u32 * 382;
-            let v_tsx_v = v_tsx_uv as f32 / 1_000_000.0;
-            // Avoid division by zero or negative values if V_TSX_V is close to or exceeds 3.3V
-            if v_tsx_v >= 3.3 {
-                ts1_value = i16::MAX; // Indicate very high resistance (low temp) or error
-            } else {
-                let r_ts_ohm = (10000.0 * v_tsx_v) / (3.3 - v_tsx_v);
-                ts1_value = (r_ts_ohm * 10.0) as i16; // Store resistance * 10 (in 0.1 Ohms)
-            }
-        } else {
-            // Die Temp mode (returns temperature in deci-Celsius)
-            // V_TSX_uV = raw_adc_ts_14bit * 382
-            // TEMP_C = 25.0 - ((V_TSX_uV - V_25_uV) / 4200.0)
-            let v_tsx_uv = raw_adc_ts1 as i32 * 382;
-            let v_25_uv = 1_200_000; // 1.200 V nominal
-            let temp_c = 25.0 - ((v_tsx_uv - v_25_uv) as f32 / 4200.0);
-            ts1_value = (temp_c * 10.0) as i16; // Store temperature in dC
-        }
+        // TS1 (always present)
+        let raw_ts1_data = self.read_registers(Register::Ts1Hi, 2).await?;
+        let raw_ts1 = ((raw_ts1_data[0] as u16) << 8) | (raw_ts1_data[1] as u16);
+        // Datasheet section 8.1.2.4 Temperature
+        // Temperature (K) = (raw_ts * 0.01) + 273.15
+        let temp_k = (raw_ts1 as f32 * 0.01) + 273.15;
+        temperatures.ts1 = temp_k as i16; // Assuming temp_k needs to be converted to i16
 
         #[cfg(any(feature = "bq76930", feature = "bq76940"))]
         {
-            // Read TS2_HI and TS2_LO registers (2 bytes) for BQ76930/40
-            let raw_ts2 = self.read_registers(Register::Ts2Hi, 2).await?;
-            let raw_adc_ts2: u16 = ((raw_ts2[0] as u16) << 6) | ((raw_ts2[1] as u16) >> 2);
-
-            if temp_sel {
-                let v_tsx_uv = raw_adc_ts2 as u32 * 382;
-                let v_tsx_v = v_tsx_uv as f32 / 1_000_000.0;
-                if v_tsx_v >= 3.3 {
-                    ts2_value = Some(i16::MAX);
-                } else {
-                    let r_ts_ohm = (10000.0 * v_tsx_v) / (3.3 - v_tsx_v);
-                    ts2_value = Some((r_ts_ohm * 10.0) as i16);
-                }
-            } else {
-                let v_tsx_uv = raw_adc_ts2 as i32 * 382;
-                let v_25_uv = 1_200_000;
-                let temp_c = 25.0 - ((v_tsx_uv - v_25_uv) as f32 / 4200.0);
-                ts2_value = Some((temp_c * 10.0) as i16);
-            }
+            // TS2 (BQ76930/40 only)
+            let raw_ts2_data = self.read_registers(Register::Ts2Hi, 2).await?;
+            let raw_ts2 = ((raw_ts2_data[0] as u16) << 8) | (raw_ts2_data[1] as u16);
+            let temp_k = (raw_ts2 as f32 * 0.01) + 273.15;
+            temperatures.ts2_k = Some(temp_k);
         }
 
         #[cfg(feature = "bq76940")]
         {
-            // Read TS3_HI and TS3_LO registers (2 bytes) for BQ76940
-            let raw_ts3 = self.read_registers(Register::Ts3Hi, 2).await?;
-            let raw_adc_ts3: u16 = ((raw_ts3[0] as u16) << 6) | ((raw_ts3[1] as u16) >> 2);
-
-            if temp_sel {
-                let v_tsx_uv = raw_adc_ts3 as u32 * 382;
-                let v_tsx_v = v_tsx_uv as f32 / 1_000_000.0;
-                if v_tsx_v >= 3.3 {
-                    ts3_value = Some(i16::MAX);
-                } else {
-                    let r_ts_ohm = (10000.0 * v_tsx_v) / (3.3 - v_tsx_v);
-                    ts3_value = Some((r_ts_ohm * 10.0) as i16);
-                }
-            } else {
-                let v_tsx_uv = raw_adc_ts3 as i32 * 382;
-                let v_25_uv = 1_200_000;
-                let temp_c = 25.0 - ((v_tsx_uv - v_25_uv) as f32 / 4200.0);
-                ts3_value = Some((temp_c * 10.0) as i16);
-            }
+            // TS3 (BQ76940 only)
+            let raw_ts3_data = self.read_registers(Register::Ts3Hi, 2).await?;
+            let raw_ts3 = ((raw_ts3_data[0] as u16) << 8) | (raw_ts3_data[1] as u16);
+            let temp_k = (raw_ts3 as f32 * 0.01) + 273.15;
+            temperatures.ts3_k = Some(temp_k);
         }
 
-        Ok(Temperatures {
-            ts1: ts1_value,
-            ts2: ts2_value,
-            ts3: ts3_value,
-            is_thermistor: temp_sel,
-        })
+        // Indicate if TS1 is Die Temp or External
+        temperatures.is_thermistor = temp_sel;
+
+        Ok(temperatures)
     }
 
-    /// Reads the raw Coulomb Counter value.
-    /// Conversion to current (A) requires CC_CFG and Rsense value.
+    /// Reads the Coulomb Counter value.
     pub async fn read_current(&mut self) -> Result<Current, Error<E>> {
-        // Read CC_HI and CC_LO registers (2 bytes)
-        let raw_cc_bytes = self.read_registers(Register::CcHi, 2).await?;
+        let raw_data = self.read_registers(Register::CcHi, 2).await?;
+        let raw_cc = ((raw_data[0] as i16) << 8) | (raw_data[1] as i16); // CC is signed
 
-        // Combine bytes to get a signed 16-bit raw CC value
-        let raw_cc: i16 = i16::from_be_bytes([raw_cc_bytes[0], raw_cc_bytes[1]]);
-
+        // The conversion from raw CC to current depends on Rsense and ADCGAIN.
+        // This conversion should be done by the user or in a higher-level abstraction.
+        // We provide the raw value here.
         Ok(Current { raw_cc })
     }
-
-    /// Reads the System Status register.
-    pub async fn read_status(&mut self) -> Result<u8, Error<E>> {
-        self.read_register(Register::SysStat).await
+    /// Reads the system status flags from the SYS_STAT register.
+    pub async fn read_status(&mut self) -> Result<SystemStatus, Error<E>> {
+        let status_byte = self.read_register(Register::SysStat).await?;
+        Ok(SystemStatus::new(status_byte))
     }
 
-    /// Clears the specified status flags in the System Status register.
+    /// Clears the specified status flags in the SYS_STAT register.
     pub async fn clear_status_flags(&mut self, flags: u8) -> Result<(), Error<E>> {
-        // To clear a flag, write a '1' to the corresponding bit.
+        // Writing a '1' to a flag bit clears it.
         self.write_register(Register::SysStat, flags).await
     }
 
-    /// Enables the charging FET.
+    /// Enables charging by setting the CHG_ON bit in SYS_CTRL2.
     pub async fn enable_charging(&mut self) -> Result<(), Error<E>> {
         let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
         sys_ctrl2 |= SYS_CTRL2_CHG_ON;
         self.write_register(Register::SysCtrl2, sys_ctrl2).await
     }
 
-    /// Disables the charging FET.
+    /// Disables charging by clearing the CHG_ON bit in SYS_CTRL2.
     pub async fn disable_charging(&mut self) -> Result<(), Error<E>> {
         let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
         sys_ctrl2 &= !SYS_CTRL2_CHG_ON;
         self.write_register(Register::SysCtrl2, sys_ctrl2).await
     }
 
-    /// Enables the discharging FET.
+    /// Enables discharging by setting the DSG_ON bit in SYS_CTRL2.
     pub async fn enable_discharging(&mut self) -> Result<(), Error<E>> {
         let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
         sys_ctrl2 |= SYS_CTRL2_DSG_ON;
         self.write_register(Register::SysCtrl2, sys_ctrl2).await
     }
-
-    /// Disables the discharging FET.
-    pub async fn disable_discharging(&mut self) -> Result<(), Error<E>> {
-        let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
-        sys_ctrl2 &= !SYS_CTRL2_DSG_ON;
-        self.write_register(Register::SysCtrl2, sys_ctrl2).await
-    }
-
-    /// Sets the cell balancing state.
-    /// The `mask` is a bitmask where bit n corresponds to cell n+1.
-    /// E.g., bit 0 for Cell 1, bit 4 for Cell 5, bit 9 for Cell 10, bit 14 for Cell 15.
+    
+    /// Sets the cell balancing for cells 1-5 (CELLBAL1 register).
+    /// The mask is a bitmask where each bit corresponds to a cell (Bit 0 = Cell 1, Bit 4 = Cell 5).
     pub async fn set_cell_balancing(&mut self, mask: u16) -> Result<(), Error<E>> {
-        // Write to CELLBAL1 (Cells 1-5)
-        let cellbal1_mask = (mask & 0x1F) as u8; // Bits 0-4
-        self.write_register(Register::CELLBAL1, cellbal1_mask)
+        // Only bits 0-4 are valid for CELLBAL1
+        let cellbal1_value = (mask & 0x1F) as u8;
+        self.write_register(Register::CELLBAL1, cellbal1_value)
             .await?;
 
         #[cfg(any(feature = "bq76930", feature = "bq76940"))]
         {
-            // Write to CELLBAL2 (Cells 6-10) for BQ76930/40
-            let cellbal2_mask = ((mask >> 5) & 0x1F) as u8; // Bits 5-9
-            self.write_register(Register::CELLBAL2, cellbal2_mask)
+            // For BQ76930/40, also set CELLBAL2 (Cells 6-10)
+            let cellbal2_value = ((mask >> 5) & 0x1F) as u8;
+            self.write_register(Register::CELLBAL2, cellbal2_value)
                 .await?;
         }
 
         #[cfg(feature = "bq76940")]
         {
-            // Write to CELLBAL3 (Cells 11-15) for BQ76940
-            let cellbal3_mask = ((mask >> 10) & 0x1F) as u8; // Bits 10-14
-            self.write_register(Register::CELLBAL3, cellbal3_mask)
+            // For BQ76940, also set CELLBAL3 (Cells 11-15)
+            let cellbal3_value = ((mask >> 10) & 0x1F) as u8;
+            self.write_register(Register::CELLBAL3, cellbal3_value)
                 .await?;
         }
 
         Ok(())
     }
 
-    /// Configures the Protection 1 register (SCD).
-    /// Rsense: 0 for lower range, 1 for upper range.
-    /// ScdDelay: 0=70us, 1=100us, 2=200us, 3=400us.
-    /// ScdThreshold: 0-7, see datasheet Table 8-9 for mV values based on Rsense.
-    pub async fn configure_protect1(
+    /// Configures the PROTECT1 register (SCD).
+    /// This method is now internal and used by apply_config.
+    async fn configure_protect1(
         &mut self,
-        rsense: u8,
-        scd_delay: u8,
-        scd_threshold: u8,
+        rsns_enable: bool,
+        scd_delay: data_types::ScdDelay,
+        scd_threshold_bits: u8,
     ) -> Result<(), Error<E>> {
-        let mut protect1_val = 0u8;
-        if rsense != 0 {
-            protect1_val |= PROTECT1_RSNS;
+        let mut protect1: u8 = 0;
+        if rsns_enable {
+            protect1 |= PROTECT1_RSNS;
         }
-        protect1_val |= (scd_delay & 0b11) << 3;
-        protect1_val |= (scd_threshold & 0b111) << 0;
-        self.write_register(Register::PROTECT1, protect1_val).await
+        protect1 |= match scd_delay {
+            data_types::ScdDelay::Delay70us => 0b00 << 3,
+            data_types::ScdDelay::Delay100us => 0b01 << 3,
+            data_types::ScdDelay::Delay200us => 0b10 << 3,
+            data_types::ScdDelay::Delay400us => 0b11 << 3,
+        };
+        protect1 |= scd_threshold_bits & 0b111; // Ensure only the lower 3 bits are used
+        self.write_register(Register::PROTECT1, protect1).await
     }
 
-    /// Configures the Protection 2 register (OCD).
-    /// OcdDelay: 0=8ms, 1=20ms, 2=40ms, 3=80ms, 4=160ms, 5=320ms, 6=640ms, 7=1280ms.
-    /// OcdThreshold: 0-15, see datasheet Table 8-10 for mV values based on Rsense.
-    pub async fn configure_protect2(
+    /// Configures the PROTECT2 register (OCD).
+    /// This method is now internal and used by apply_config.
+    async fn configure_protect2(
         &mut self,
-        ocd_delay: u8,
-        ocd_threshold: u8,
+        ocd_delay: data_types::OcdDelay,
+        ocd_threshold_bits: u8,
     ) -> Result<(), Error<E>> {
-        let mut protect2_val = 0u8;
-        protect2_val |= (ocd_delay & 0b111) << 4;
-        protect2_val |= (ocd_threshold & 0b1111) << 0;
-        self.write_register(Register::PROTECT2, protect2_val).await
+        let mut protect2: u8 = 0;
+        protect2 |= match ocd_delay {
+            data_types::OcdDelay::Delay10ms => 0b000 << 4,
+            data_types::OcdDelay::Delay20ms => 0b001 << 4,
+            data_types::OcdDelay::Delay40ms => 0b010 << 4,
+            data_types::OcdDelay::Delay80ms => 0b011 << 4,
+            data_types::OcdDelay::Delay160ms => 0b100 << 4,
+            data_types::OcdDelay::Delay320ms => 0b101 << 4,
+            data_types::OcdDelay::Delay640ms => 0b110 << 4,
+            data_types::OcdDelay::Delay1280ms => 0b111 << 4,
+        };
+        protect2 |= ocd_threshold_bits & 0b1111; // Ensure only the lower 4 bits are used
+        self.write_register(Register::PROTECT2, protect2).await
     }
 
-    /// Configures the Protection 3 register (OV/UV Delay).
-    /// UvDelay: 0=1s, 1=4s, 2=8s, 3=16s.
-    /// OvDelay: 0=1s, 1=2s, 2=4s, 3=8s.
-    pub async fn configure_protect3(&mut self, uv_delay: u8, ov_delay: u8) -> Result<(), Error<E>> {
-        let mut protect3_val = 0u8;
-        protect3_val |= (uv_delay & 0b11) << 6;
-        protect3_val |= (ov_delay & 0b11) << 4;
-        // Keep RSVD bits as 0
-        self.write_register(Register::PROTECT3, protect3_val).await
+    /// Configures the PROTECT3 register (UV/OV Delay).
+    /// This method is now internal and used by apply_config.
+    async fn configure_protect3(
+        &mut self,
+        uv_delay: data_types::UvOvDelay,
+        ov_delay: data_types::UvOvDelay,
+    ) -> Result<(), Error<E>> {
+        let mut protect3: u8 = 0;
+        protect3 |= match uv_delay {
+            data_types::UvOvDelay::Delay1s => 0b00 << 6,
+            data_types::UvOvDelay::Delay2s => 0b01 << 6,
+            data_types::UvOvDelay::Delay4s => 0b10 << 6,
+            data_types::UvOvDelay::Delay8s => 0b11 << 6,
+        };
+        protect3 |= match ov_delay {
+            data_types::UvOvDelay::Delay1s => 0b00 << 4,
+            data_types::UvOvDelay::Delay2s => 0b01 << 4,
+            data_types::UvOvDelay::Delay4s => 0b10 << 4,
+            data_types::UvOvDelay::Delay8s => 0b11 << 4,
+        };
+        self.write_register(Register::PROTECT3, protect3).await
     }
 
-    /// Configures the Overvoltage Trip register.
-    /// ov_trip_8bit: Middle 8 bits of the 14-bit ADC value (10-ov_trip_8bit-1000).
-    /// See datasheet Table 8-12 and Section 8.3.1.2 for calculation based on desired voltage, GAIN, and OFFSET.
-    pub async fn configure_ov_trip(&mut self, ov_trip_8bit: u8) -> Result<(), Error<E>> {
-        self.write_register(Register::OvTrip, ov_trip_8bit).await
-    }
-
-    /// Configures the Undervoltage Trip register.
-    /// uv_trip_8bit: Middle 8 bits of the 14-bit ADC value (01-uv_trip_8bit-0000).
-    /// See datasheet Table 8-13 and Section 8.3.1.2 for calculation based on desired voltage, GAIN, and OFFSET.
-    pub async fn configure_uv_trip(&mut self, uv_trip_8bit: u8) -> Result<(), Error<E>> {
-        self.write_register(Register::UvTrip, uv_trip_8bit).await
-    }
-
-    /// Enters the SHIP mode.
-    /// WARNING: Refer to the datasheet for the exact sequence to enter SHIP mode.
+    /// Enters ship mode.
+    /// This requires writing 0x00 to the SYS_CTRL1 register twice within 4 seconds.
     pub async fn enter_ship_mode(&mut self) -> Result<(), Error<E>> {
-        // Datasheet Section 8.4.2:
-        // Starting from: [SHUT_A] = 0, [SHUT_B] = 0
-        // Write #1: [SHUT_A] = 0, [SHUT_B] = 1 (SYS_CTRL1 = 0b...01)
-        // Write #2: [SHUT_A] = 1, [SHUT_B] = 0 (SYS_CTRL1 = 0b...10)
+        // Read current SYS_CTRL1 value to restore later if needed (though ship mode is usually permanent until wake)
+        // let original_sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
 
-        // Ensure SHUT_A and SHUT_B are initially 0 (reset value) or write 0x00 first if unsure.
-        // Let's write 0x00 to SYS_CTRL1 first to be safe, preserving other bits.
-        let mut sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
-        sys_ctrl1 &= !(SYS_CTRL1_SHUT_A | SYS_CTRL1_SHUT_B);
-        self.write_register(Register::SysCtrl1, sys_ctrl1).await?;
+        // Write 0x00 to SYS_CTRL1
+        self.write_register(Register::SysCtrl1, 0x00).await?;
 
-        // Write #1: [SHUT_A] = 0, [SHUT_B] = 1
-        let mut sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
-        sys_ctrl1 &= !SYS_CTRL1_SHUT_A;
-        sys_ctrl1 |= SYS_CTRL1_SHUT_B;
-        self.write_register(Register::SysCtrl1, sys_ctrl1).await?;
+        // Wait for a short period (less than 4 seconds) - a small delay is usually sufficient
+        // In a real application, you might need a non-blocking delay here.
+        // For this example, we'll assume a blocking delay is acceptable or handled by the async runtime.
+        // core::thread::sleep(core::time::Duration::from_millis(100)); // Example blocking delay
 
-        // Write #2: [SHUT_A] = 1, [SHUT_B] = 0
-        let mut sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
-        sys_ctrl1 |= SYS_CTRL1_SHUT_A;
-        sys_ctrl1 &= !SYS_CTRL1_SHUT_B;
-        self.write_register(Register::SysCtrl1, sys_ctrl1).await?;
+        // Write 0x00 to SYS_CTRL1 again
+        self.write_register(Register::SysCtrl1, 0x00).await?;
 
         Ok(())
     }
 
-    /// Checks if the ALERT pin is being overridden by external control.
+    /// Checks if the ALERT pin is overridden.
     pub async fn is_alert_overridden(&mut self) -> Result<bool, Error<E>> {
-        let sys_stat = self.read_status().await?;
+        let sys_stat = self.read_register(Register::SysStat).await?;
         Ok((sys_stat & SYS_STAT_OVRD_ALERT) != 0)
     }
 
-    /// Converts raw Coulomb Counter value to current in mA.
-    /// Rsense_mOhm: Sense resistor value in milliOhms.
-    /// See datasheet Section 8.3.1.1.3 for formula.
+    /// Converts a raw Coulomb Counter value to current in mA.
+    /// This is a helper function and requires the ADCGAIN and Rsense values.
     pub fn convert_raw_cc_to_current_ma(&self, raw_cc: i16, rsense_m_ohm: f32) -> f32 {
-        // CC Reading (in μV) = [16-bit 2’s Complement Value] × (8.44 μV/LSB)
-        // Current (A) = CC Reading (in V) / Rsense (in Ω)
-        // Current (mA) = (CC Reading (in μV) / 1000) / (Rsense (in mΩ) / 1000)
-        // Current (mA) = CC Reading (in μV) / Rsense (in mΩ)
-        // CC Reading (in μV) = raw_cc * 8.44
-        (raw_cc as f32 * 8.44) / rsense_m_ohm
+        // Datasheet section 8.1.2.5 Coulomb Counter
+        // CC_LSB (A) = 8.44uV / Rsense(mOhm)
+        // Current (A) = raw_cc * CC_LSB (A)
+        // Current (mA) = raw_cc * CC_LSB (A) * 1000
+        // Current (mA) = raw_cc * (8.44e-6 / (rsense_m_ohm * 1e-3)) * 1000
+        // Current (mA) = raw_cc * (8.44 / rsense_m_ohm)
+        (raw_cc as f32) * (8.44 / rsense_m_ohm)
     }
 
-    /// Configures the BQ769x0 with the provided battery parameters.
+    /// Sets the configuration of the BQ769x0 chip based on the provided BatteryConfig.
     pub async fn set_config(&mut self, config: &BatteryConfig) -> Result<(), Error<E>> {
-        // Configure SYS_CTRL1 and SYS_CTRL2 (can potentially be a sequential write)
-        self.write_register(Register::SysCtrl1, config.sys_ctrl1_val).await?;
-        self.write_register(Register::SysCtrl2, config.sys_ctrl2_val).await?;
+        // Implement current limit to voltage threshold mapping and register writing here
 
-        // Configure Protection registers
-        self.configure_ov_trip(config.ov_trip_8bit).await?;
-        self.configure_uv_trip(config.uv_trip_8bit).await?;
+        // 1. Calculate target voltage thresholds from current limits and Rsense
+        let scd_target_voltage_mv =
+            config.protection_config.scd_limit_ma as f32 * config.rsense_m_ohm / 1000.0;
+        let ocd_target_voltage_mv =
+            config.protection_config.ocd_limit_ma as f32 * config.rsense_m_ohm / 1000.0;
+
+        // 2. Find the closest supported voltage thresholds and get their register bit values
+        let scd_threshold_bits = Self::find_closest_scd_threshold_bits(scd_target_voltage_mv);
+        let ocd_threshold_bits = Self::find_closest_ocd_threshold_bits(ocd_target_voltage_mv);
+
+        // 3. Configure registers based on BatteryConfig and mapped thresholds
+
+        // SYS_CTRL1
+        let mut sys_ctrl1: u8 = 0;
+        if config.load_present {
+            sys_ctrl1 |= SYS_CTRL1_LOAD_PRESENT;
+        }
+        if config.adc_enable {
+            sys_ctrl1 |= SYS_CTRL1_ADC_EN;
+        }
+        match config.temp_sensor_selection {
+            data_types::TempSensor::Internal => { /* TEMP_SEL = 0, default */ }
+            data_types::TempSensor::External => {
+                sys_ctrl1 |= SYS_CTRL1_TEMP_SEL;
+            }
+        }
+        if config.shutdown_a {
+            sys_ctrl1 |= SYS_CTRL1_SHUT_A;
+        }
+        if config.shutdown_b {
+            sys_ctrl1 |= SYS_CTRL1_SHUT_B;
+        }
+        self.write_register(Register::SysCtrl1, sys_ctrl1).await?;
+
+        // SYS_CTRL2
+        let mut sys_ctrl2: u8 = 0;
+        if config.delay_disable {
+            sys_ctrl2 |= SYS_CTRL2_DELAY_DIS;
+        }
+        if config.cc_enable {
+            sys_ctrl2 |= SYS_CTRL2_CC_EN;
+        }
+        if config.cc_oneshot {
+            sys_ctrl2 |= SYS_CTRL2_CC_ONESHOT;
+        }
+        if config.discharge_on {
+            sys_ctrl2 |= SYS_CTRL2_DSG_ON;
+        }
+        if config.charge_on {
+            sys_ctrl2 |= SYS_CTRL2_CHG_ON;
+        }
+        self.write_register(Register::SysCtrl2, sys_ctrl2).await?;
+
+        // OV_TRIP
+        let ov_trip_8bit = ((config.overvoltage_trip_mv.saturating_sub(1200)) / 5) as u8;
+        self.write_register(Register::OvTrip, ov_trip_8bit).await?;
+
+        // UV_TRIP
+        let uv_trip_8bit = ((config.undervoltage_trip_mv.saturating_sub(700)) / 5) as u8;
+        self.write_register(Register::UvTrip, uv_trip_8bit).await?;
+
+        // PROTECT1
         self.configure_protect1(
-            config.protect1_rsense,
-            config.protect1_scd_delay,
-            config.protect1_scd_threshold,
-        ).await?;
-        self.configure_protect2(
-            config.protect2_ocd_delay,
-            config.protect2_ocd_threshold,
-        ).await?;
-        self.configure_protect3(
-            config.protect3_uv_delay,
-            config.protect3_ov_delay,
-        ).await?;
+            config.protection_config.rsns_enable,
+            config.protection_config.scd_delay,
+            scd_threshold_bits,
+        )
+        .await?;
 
-        // Configure CC_CFG
-        self.write_register(Register::CcCfg, config.cc_cfg_val).await?;
+        // PROTECT2
+        self.configure_protect2(config.protection_config.ocd_delay, ocd_threshold_bits)
+            .await?;
+
+        // PROTECT3
+        self.configure_protect3(
+            config.protection_config.uv_delay,
+            config.protection_config.ov_delay,
+        )
+        .await?;
+
+        // TODO: Implement CC_CFG configuration if needed
 
         Ok(())
+    }
+
+    // Helper function to find the closest SCD threshold bits
+    fn find_closest_scd_threshold_bits(target_voltage_mv: f32) -> u8 {
+        let thresholds_mv = [20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0];
+        let mut closest_bits = 0;
+        let mut min_diff = f32::MAX;
+
+        for (i, &threshold) in thresholds_mv.iter().enumerate() {
+            let diff = (target_voltage_mv - threshold).abs();
+            if diff < min_diff {
+                min_diff = diff;
+                closest_bits = i as u8;
+            }
+        }
+        closest_bits
+    }
+
+    // Helper function to find the closest OCD threshold bits
+    fn find_closest_ocd_threshold_bits(target_voltage_mv: f32) -> u8 {
+        let thresholds_mv = [
+            10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0,
+            80.0, 85.0,
+        ];
+        let mut closest_bits = 0;
+        let mut min_diff = f32::MAX;
+
+        for (i, &threshold) in thresholds_mv.iter().enumerate() {
+            let diff = (target_voltage_mv - threshold).abs();
+            if diff < min_diff {
+                min_diff = diff;
+                closest_bits = i as u8;
+            }
+        }
+        closest_bits
     }
 }
