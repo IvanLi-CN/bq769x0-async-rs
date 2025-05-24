@@ -19,19 +19,19 @@ mod errors;
 pub mod units; // Make the units module public
 
 pub use data_types::{
-    BatteryConfig, CellVoltages, CoulombCounter, Temperatures, SystemStatus,
-    TempSensor, ScdDelay, OcdDelay, UvOvDelay, ProtectionConfig,
+    BatteryConfig, CellVoltages, CoulombCounter, OcdDelay, ProtectionConfig, ScdDelay,
+    SystemStatus, TempSensor, Temperatures, UvOvDelay,
 };
 use errors::Error;
 
 pub use crc::{calculate_crc, CrcMode, Disabled, Enabled};
 
-use crate::units::{ElectricPotential, ElectricCurrent}; // 从 crate::units 导入基本类型
+use crate::units::ElectricalResistance;
+use crate::units::{ElectricCurrent, ElectricPotential}; // 从 crate::units 导入基本类型
 use uom::si::electric_potential::millivolt;
-use uom::si::thermodynamic_temperature::kelvin;
-use crate::units::ElectricalResistance; // 从 crate::units 导入 ElectricalResistance
- // 导入 milliohm
-// 确保 hundred_micro_ohm 导入路径正确
+use uom::si::thermodynamic_temperature::kelvin; // 从 crate::units 导入 ElectricalResistance
+                                                // 导入 milliohm
+                                                // 确保 hundred_micro_ohm 导入路径正确
 
 /// BQ769x0 driver
 pub struct Bq769x0<I2C, M: CrcMode>
@@ -370,21 +370,26 @@ where
     Self: RegisterAccess<E>,
 {
     /// Reads the ADCGAIN and ADCOFFSET registers and calculates the actual GAIN and OFFSET values.
-    async fn read_adc_calibration(&mut self) -> Result<(ElectricPotential, ElectricPotential), Error<E>> {
+    async fn read_adc_calibration(
+        &mut self,
+    ) -> Result<(ElectricPotential, ElectricPotential), Error<E>> {
         let adc_gain1 = self.read_register(Register::ADCGAIN1).await?;
         let adc_offset = self.read_register(Register::ADCOFFSET).await?;
         let adc_gain2 = self.read_register(Register::ADCGAIN2).await?;
 
         // Datasheet section 8.1.2.3 ADC Gain and Offset
-        // ADCGAIN = (ADCGAIN1[7:0] << 2) | ADCGAIN2[7:6]
-        let adc_gain_raw = ((adc_gain1 as u16) << 2) | ((adc_gain2 as u16 >> 6) & 0b11);
+        // Datasheet section 8.5, Table 8-21 (ADCGAIN1) and Table 8-22 (ADCGAIN2)
+        // ADCGAIN<4:3> are bits 3-2 of ADCGAIN1
+        // ADCGAIN<2:0> are bits 7-5 of ADCGAIN2
+        let adc_gain_raw =
+            (((adc_gain1 & 0b00001100) as u16) << 3) | (((adc_gain2 & 0b11100000) as u16) >> 5);
 
         // ADCOFFSET is signed 8-bit
         let adc_offset_signed = adc_offset as i8;
 
         // Convert raw ADC gain and offset to uom types
-        // ADCGAIN is in units of 10uV/LSB, ADCOFFSET is in mV
-        let adc_gain = ElectricPotential::new::<uom::si::electric_potential::microvolt>(adc_gain_raw as f32 * 10.0);
+        // GAIN = 365 μV/LSB + (ADCGAIN<4:0> in decimal) × (1 μV/LSB)
+        let adc_gain = ElectricPotential::new::<uom::si::electric_potential::microvolt>(365.0 + adc_gain_raw as f32);
         let adc_offset = ElectricPotential::new::<millivolt>(adc_offset_signed as f32);
 
         Ok((adc_gain, adc_offset))
@@ -428,12 +433,12 @@ where
         let lo_byte = raw_data[1];
         let raw_voltage = ((hi_byte as u16) << 8) | (lo_byte as u16);
 
-        // Pack voltage is sum of cell voltages, no separate calibration needed here.
-        // The datasheet implies BatHi/Lo is a direct sum, but it's good practice
-        // to verify this or use cell voltages for pack voltage calculation.
-        // For simplicity, we'll read the register directly for now.
-        // The conversion factor is 1mV per LSB (based on cell voltage conversion).
-        Ok(ElectricPotential::new::<millivolt>(raw_voltage as f32))
+        // Datasheet section 8.3.1.1.6 16-Bit Pack Voltage
+        // This 16-bit value has a nominal LSB of 1.532 mV.
+        // V(BAT) = raw_voltage * 1.532 mV
+        Ok(ElectricPotential::new::<millivolt>(
+            raw_voltage as f32 * 1.532,
+        ))
     }
 
     /// Reads the temperature sensors (TS1, TS2, TS3 or Die Temp)
@@ -470,7 +475,9 @@ where
             let raw_ts2_data = self.read_registers(Register::Ts2Hi, 2).await?;
             let raw_ts2 = ((raw_ts2_data[0] as u16) << 8) | (raw_ts2_data[1] as u16);
             let temp_k_scaled = (raw_ts2 as f32 * 0.01) + 273.15;
-            temperatures.ts2 = Some(crate::units::ThermodynamicTemperature::new::<kelvin>(temp_k_scaled));
+            temperatures.ts2 = Some(crate::units::ThermodynamicTemperature::new::<kelvin>(
+                temp_k_scaled,
+            ));
         }
 
         #[cfg(feature = "bq76940")]
@@ -479,7 +486,9 @@ where
             let raw_ts3_data = self.read_registers(Register::Ts3Hi, 2).await?;
             let raw_ts3 = ((raw_ts3_data[0] as u16) << 8) | (raw_ts3_data[1] as u16);
             let temp_k_scaled = (raw_ts3 as f32 * 0.01) + 273.15;
-            temperatures.ts3 = Some(crate::units::ThermodynamicTemperature::new::<kelvin>(temp_k_scaled));
+            temperatures.ts3 = Some(crate::units::ThermodynamicTemperature::new::<kelvin>(
+                temp_k_scaled,
+            ));
         }
 
         // Indicate if TS1 is Die Temp or External
@@ -530,7 +539,7 @@ where
         sys_ctrl2 |= SYS_CTRL2_DSG_ON;
         self.write_register(Register::SysCtrl2, sys_ctrl2).await
     }
-    
+
     /// Sets the cell balancing for cells 1-5 (CELLBAL1 register).
     /// The mask is a bitmask where each bit corresponds to a cell (Bit 0 = Cell 1, Bit 4 = Cell 5).
     pub async fn set_cell_balancing(&mut self, mask: u16) -> Result<(), Error<E>> {
@@ -653,7 +662,11 @@ where
 
     /// Converts a raw Coulomb Counter value to current in mA.
     /// This is a helper function and requires the ADCGAIN and Rsense values.
-    pub fn convert_raw_cc_to_current_ma(&self, raw_cc: i16, rsense: ElectricalResistance) -> ElectricCurrent {
+    pub fn convert_raw_cc_to_current_ma(
+        &self,
+        raw_cc: i16,
+        rsense: ElectricalResistance,
+    ) -> ElectricCurrent {
         // Datasheet section 8.1.2.5 Current
         // Current (mA) = raw_cc * 8.44 / Rsense (mOhm)
         // 8.44 is in mV/LSB for CC, so (raw_cc * 8.44) is in mV.
@@ -663,7 +676,8 @@ where
         // Resistance (mOhm)
         // Result should be in mA.
         // 8.44 mV/LSB
-        let voltage_per_lsb = ElectricPotential::new::<uom::si::electric_potential::microvolt>(8440.0); // 8.44 mV = 8440 microvolts
+        let voltage_per_lsb =
+            ElectricPotential::new::<uom::si::electric_potential::microvolt>(8.44); // 8.44 μV/LSB
         let raw_voltage = voltage_per_lsb * raw_cc as f32;
         (raw_voltage / rsense).into()
     }
@@ -674,14 +688,14 @@ where
 
         // 1. Calculate target voltage thresholds from current limits and Rsense
         // 1. Calculate target voltage thresholds from current limits and Rsense
-        let scd_target_voltage =
-            config.protection_config.scd_limit * config.rsense;
-        let ocd_target_voltage =
-            config.protection_config.ocd_limit * config.rsense;
+        let scd_target_voltage = config.protection_config.scd_limit * config.rsense;
+        let ocd_target_voltage = config.protection_config.ocd_limit * config.rsense;
 
         // 2. Find the closest supported voltage thresholds and get their register bit values
-        let scd_threshold_bits = Self::find_closest_scd_threshold_bits(scd_target_voltage.get::<millivolt>() as f32);
-        let ocd_threshold_bits = Self::find_closest_ocd_threshold_bits(ocd_target_voltage.get::<millivolt>() as f32);
+        let scd_threshold_bits =
+            Self::find_closest_scd_threshold_bits(scd_target_voltage.get::<millivolt>() as f32);
+        let ocd_threshold_bits =
+            Self::find_closest_ocd_threshold_bits(ocd_target_voltage.get::<millivolt>() as f32);
 
         // 3. Configure registers based on BatteryConfig and mapped thresholds
 

@@ -115,14 +115,13 @@ pub enum Register {
 
 // SYS_STAT register bit masks
 pub const SYS_STAT_CC_READY: u8 = 1 << 7;
-pub const SYS_STAT_OVR_TEMP: u8 = 1 << 6; // Overtemperature
-pub const SYS_STAT_OVRD_ALERT: u8 = 1 << 4; // External Alert Override
-pub const SYS_STAT_UV: u8 = 1 << 5; // Undervoltage
-pub const SYS_STAT_OV: u8 = 1 << 4; // Overvoltage
-pub const SYS_STAT_SCD: u8 = 1 << 3; // Short Circuit Discharge
-pub const SYS_STAT_OCD: u8 = 1 << 2; // Overcurrent Discharge
-pub const SYS_STAT_CUV: u8 = 1 << 1; // Cell Undervoltage
-pub const SYS_STAT_COV: u8 = 1 << 0; // Cell Overvoltage
+// Bit 6 is RSVD (Reserved)
+pub const SYS_STAT_DEVICE_XREADY: u8 = 1 << 5;
+pub const SYS_STAT_OVRD_ALERT: u8 = 1 << 4;
+pub const SYS_STAT_UV: u8 = 1 << 3;
+pub const SYS_STAT_OV: u8 = 1 << 2;
+pub const SYS_STAT_SCD: u8 = 1 << 1;
+pub const SYS_STAT_OCD: u8 = 1 << 0;
 
 // SYS_CTRL1 register bit masks
 pub const SYS_CTRL1_LOAD_PRESENT: u8 = 1 << 7;
