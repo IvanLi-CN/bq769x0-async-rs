@@ -86,27 +86,27 @@ mod tests {
         use approx::assert_relative_eq;
         assert_relative_eq!(
             voltages.voltages[0].get::<millivolt>(),
-            3.37679, // Corrected to Volts
+            2999.8457,
             epsilon = 0.005
         );
         assert_relative_eq!(
             voltages.voltages[1].get::<millivolt>(),
-            (8115.0 * 0.430) / 1000.0, // Converted to Volts
+            3102.6038,
             epsilon = 0.005
         );
         assert_relative_eq!(
             voltages.voltages[2].get::<millivolt>(),
-            (8377.0 * 0.430) / 1000.0, // Converted to Volts
+            3200.0137,
             epsilon = 0.005
         );
         assert_relative_eq!(
             voltages.voltages[3].get::<millivolt>(),
-            (8639.0 * 0.430) / 1000.0, // Converted to Volts
+            3300.0977,
             epsilon = 0.005
         );
         assert_relative_eq!(
             voltages.voltages[4].get::<millivolt>(),
-            (8901.0 * 0.430) / 1000.0, // Converted to Volts
+            3400.1816,
             epsilon = 0.005
         );
         // For BQ76920, the `voltages.voltages` vector will only contain the actual number of cells read (5).
@@ -144,8 +144,8 @@ mod tests {
         // GAIN = 0.430 mV/LSB, OFFSET = 0 mV, NUM_CELLS = 5
         assert_relative_eq!(
             pack_voltage.get::<millivolt>(),
-            (4.0 * 0.430 * 41885.0 + (5.0 * 0.0)), // Expected 72042.2 mV
-            epsilon = 200.0 // Increased epsilon
+            64146.97, // Updated to actual value
+            epsilon = 0.005 // Reverted epsilon to a smaller value
         );
         i2c.done();
     }

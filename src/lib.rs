@@ -60,10 +60,7 @@ where
     type ReadBuffer: Deref<Target = [u8]>;
 
     /// Reads a single byte from the specified register.
-    async fn read_register(
-        &mut self,
-        reg: Register,
-    ) -> Result<u8, Error<E>>;
+    async fn read_register(&mut self, reg: Register) -> Result<u8, Error<E>>;
 
     /// Reads multiple bytes starting from the specified register.
     async fn read_registers(
@@ -73,18 +70,10 @@ where
     ) -> Result<Self::ReadBuffer, Error<E>>;
 
     /// Writes a single byte to the specified register.
-    async fn write_register(
-        &mut self,
-        reg: Register,
-        value: u8,
-    ) -> Result<(), Error<E>>;
+    async fn write_register(&mut self, reg: Register, value: u8) -> Result<(), Error<E>>;
 
     /// Writes multiple bytes starting from the specified register.
-    async fn write_registers(
-        &mut self,
-        reg: Register,
-        values: &[u8],
-    ) -> Result<(), Error<E>>;
+    async fn write_registers(&mut self, reg: Register, values: &[u8]) -> Result<(), Error<E>>;
 }
 
 #[maybe_async_cfg::maybe(
@@ -209,7 +198,7 @@ where
         let crc_data = [(self.address << 1) | 1, received_data];
 
         let calculated_crc = crc::calculate_crc(&crc_data); // Updated call
-        
+
         if calculated_crc != received_crc {
             // CRC validation failed
             #[cfg(feature = "defmt")]
@@ -332,7 +321,7 @@ where
         }
 
         let mut calculated_crc = crc::calculate_crc(&crc_data); // Updated call
-        
+
         let mut data_to_write = heapless::Vec::<u8, 62>::new(); // Max 30 data bytes + 30 CRC bytes + register + first CRC
         data_to_write
             .push(reg as u8)
@@ -384,15 +373,16 @@ where
         // Datasheet section 8.5, Table 8-21 (ADCGAIN1) and Table 8-22 (ADCGAIN2)
         // ADCGAIN<4:3> are bits 3-2 of ADCGAIN1
         // ADCGAIN<2:0> are bits 7-5 of ADCGAIN2
-        let adc_gain_raw =
-            (((adc_gain1 & 0b00001100) as u16) << 3) | (((adc_gain2 & 0b11100000) as u16) >> 5);
+        let adc_gain_raw = ((adc_gain1 & 0b00001100) << 1) | ((adc_gain2 & 0b11100000) >> 5);
 
         // ADCOFFSET is signed 8-bit
         let adc_offset_signed = adc_offset as i8;
 
         // Convert raw ADC gain and offset to uom types
         // GAIN = 365 μV/LSB + (ADCGAIN<4:0> in decimal) × (1 μV/LSB)
-        let adc_gain = ElectricPotential::new::<uom::si::electric_potential::microvolt>(365.0 + adc_gain_raw as f32);
+        let adc_gain = ElectricPotential::new::<uom::si::electric_potential::microvolt>(
+            365.0 + adc_gain_raw as f32,
+        );
         let adc_offset = ElectricPotential::new::<millivolt>(adc_offset_signed as f32);
 
         Ok((adc_gain, adc_offset))
@@ -408,13 +398,10 @@ where
 
         let mut cell_voltages = CellVoltages::new();
 
-        // Define a dimensionless constant for 1000
-        let thousand = 1000.0;
-
         for i in 0..NUM_CELLS {
             let hi_byte = raw_data[i * 2];
             let lo_byte = raw_data[i * 2 + 1];
-            let raw_voltage = ((hi_byte as u16) << 8) | (lo_byte as u16);
+            let raw_voltage = (((hi_byte & 0x3f) as u16) << 8) | (lo_byte as u16);
 
             // Datasheet section 8.1.2.3 ADC Gain and Offset
             // Cell Voltage (mV) = (raw_voltage * ADCGAIN / 1000) + ADCOFFSET
@@ -422,10 +409,11 @@ where
             // adc_gain is ElectricPotential (microvolt).
             // adc_offset is ElectricPotential (millivolt).
             // Convert adc_gain to millivolt before calculation to match adc_offset unit.
-            let voltage_mv = (adc_gain.get::<millivolt>() * raw_voltage as f32) / thousand + adc_offset.get::<millivolt>();
+            let voltage_mv =
+                (adc_gain.get::<millivolt>() * raw_voltage as f32) + adc_offset.get::<millivolt>();
             cell_voltages.voltages[i] = ElectricPotential::new::<millivolt>(voltage_mv);
             #[cfg(feature = "defmt")]
-            defmt::info!(
+            defmt::debug!(
                 "Cell {}: raw_voltage={}, adc_gain_mv_per_lsb={}, adc_offset_mv={}, voltage_mv={}",
                 i + 1,
                 raw_voltage,
@@ -467,9 +455,12 @@ where
                                  // A more robust solution would involve passing this as a parameter or
                                  // deriving it from chip configuration.
 
-        let pack_voltage_mv = (4.0 * adc_gain.get::<uom::si::electric_potential::microvolt>() * raw_voltage as f32) / 1000.0 + (num_cells_f32 * adc_offset.get::<millivolt>());
+        let pack_voltage_mv =
+            (4.0 * adc_gain.get::<uom::si::electric_potential::microvolt>() * raw_voltage as f32)
+                / 1000.0
+                + (num_cells_f32 * adc_offset.get::<millivolt>());
         #[cfg(feature = "defmt")]
-        defmt::info!(
+        defmt::debug!(
             "Pack Voltage: raw_voltage={}, adc_gain_uv_per_lsb={}, adc_offset_mv={}, num_cells={}, pack_voltage_mv={}",
             raw_voltage,
             adc_gain.get::<uom::si::electric_potential::microvolt>(),
@@ -497,7 +488,9 @@ where
         let adc_lsb_microvolt = 382.0; // 382 μV/LSB
 
         // Helper closure for temperature conversion
-        let convert_temp = |raw_ts: u16, is_thermistor: bool| -> crate::units::ThermodynamicTemperature {
+        let convert_temp = |raw_ts: u16,
+                            is_thermistor: bool|
+         -> crate::units::ThermodynamicTemperature {
             if is_thermistor {
                 // External Thermistor (TEMP_SEL = 1)
                 // V_TSX = (ADC in Decimal) x 382 μV/LSB
@@ -743,13 +736,14 @@ where
         let voltage_per_lsb =
             ElectricPotential::new::<uom::si::electric_potential::microvolt>(8.44); // 8.44 μV/LSB
         let raw_voltage = voltage_per_lsb * raw_cc as f32;
-        let current_microampere = (raw_voltage / rsense).get::<uom::si::electric_current::microampere>(); // Calculate in microampere
+        let current_microampere =
+            (raw_voltage / rsense).get::<uom::si::electric_current::microampere>(); // Calculate in microampere
 
         #[cfg(feature = "defmt")]
         defmt::info!(
             "Raw CC: {}, Rsense: {:?}, Current (uA): {}",
             raw_cc,
-            rsense,
+            rsense.get::<uom::si::electrical_resistance::milliohm>(),
             current_microampere
         );
 
@@ -823,18 +817,22 @@ where
         let (adc_gain, adc_offset) = self.read_adc_calibration().await?;
 
         // OV_TRIP_FULL = (OV – ADCOFFSET) ÷ ADCGAIN
-        let ov_trip_full_f32 = (config.overvoltage_trip.get::<millivolt>() - adc_offset.get::<millivolt>()) / (adc_gain.get::<uom::si::electric_potential::microvolt>() / 1000.0);
+        let ov_trip_full_f32 = (config.overvoltage_trip.get::<millivolt>()
+            - adc_offset.get::<millivolt>())
+            / (adc_gain.get::<uom::si::electric_potential::microvolt>() / 1000.0);
         let ov_trip_full_u16 = (ov_trip_full_f32 + 0.5) as u16; // Use simple cast for rounding
-        // Remove upper 2 MSB and lower 4 LSB, retaining middle 8 bits.
-        // "10-XXXX-XXXX–1000" -> XXXXXXXX
+                                                                // Remove upper 2 MSB and lower 4 LSB, retaining middle 8 bits.
+                                                                // "10-XXXX-XXXX–1000" -> XXXXXXXX
         let ov_trip_8bit = ((ov_trip_full_u16 >> 4) & 0xFF) as u8;
         self.write_register(Register::OvTrip, ov_trip_8bit).await?;
 
         // UV_TRIP_FULL = (UV – ADCOFFSET) ÷ ADCGAIN
-        let uv_trip_full_f32 = (config.undervoltage_trip.get::<millivolt>() - adc_offset.get::<millivolt>()) / (adc_gain.get::<uom::si::electric_potential::microvolt>() / 1000.0);
+        let uv_trip_full_f32 = (config.undervoltage_trip.get::<millivolt>()
+            - adc_offset.get::<millivolt>())
+            / (adc_gain.get::<uom::si::electric_potential::microvolt>() / 1000.0);
         let uv_trip_full_u16 = (uv_trip_full_f32 + 0.5) as u16; // Use simple cast for rounding
-        // Remove upper 2 MSB and lower 4 LSB, retaining middle 8 bits.
-        // "01-XXXX-XXXX–0000" -> XXXXXXXX
+                                                                // Remove upper 2 MSB and lower 4 LSB, retaining middle 8 bits.
+                                                                // "01-XXXX-XXXX–0000" -> XXXXXXXX
         let uv_trip_8bit = ((uv_trip_full_u16 >> 4) & 0xFF) as u8;
         self.write_register(Register::UvTrip, uv_trip_8bit).await?;
 
