@@ -172,9 +172,3 @@ pub const CELLBAL3_BAL14: u8 = 1 << 3;
 pub const CELLBAL3_BAL15: u8 = 1 << 4;
 
 // Number of cells
-#[cfg(feature = "bq76920")]
-pub const NUM_CELLS: usize = 5;
-#[cfg(feature = "bq76930")]
-pub const NUM_CELLS: usize = 10;
-#[cfg(feature = "bq76940")]
-pub const NUM_CELLS: usize = 15;

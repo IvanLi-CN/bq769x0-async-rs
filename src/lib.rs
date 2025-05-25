@@ -37,7 +37,7 @@ use uom::si::thermodynamic_temperature::kelvin; // 从 crate::units 导入 Elect
                                                 // 确保 hundred_micro_ohm 导入路径正确
 
 /// BQ769x0 driver
-pub struct Bq769x0<I2C, M: CrcMode>
+pub struct Bq769x0<I2C, M: CrcMode, const N: usize>
 where
     I2C: I2c,
 {
@@ -80,7 +80,7 @@ where
     sync(cfg(not(feature = "async")), self = "Bq769x0",),
     async(feature = "async", keep_self)
 )]
-impl<I2C, E> Bq769x0<I2C, Disabled>
+impl<I2C, E, const N: usize> Bq769x0<I2C, Disabled, N>
 where
     I2C: I2c<Error = E>,
 {
@@ -103,7 +103,7 @@ where
     sync(cfg(not(feature = "async")), self = "Bq769x0",),
     async(feature = "async", keep_self)
 )]
-impl<I2C, E> RegisterAccess<E> for Bq769x0<I2C, Disabled>
+impl<I2C, E, const N: usize> RegisterAccess<E> for Bq769x0<I2C, Disabled, N>
 where
     I2C: I2c<Error = E>,
 {
@@ -155,7 +155,7 @@ where
     sync(cfg(not(feature = "async")), self = "Bq769x0",),
     async(feature = "async", keep_self)
 )]
-impl<I2C, E> Bq769x0<I2C, Enabled>
+impl<I2C, E, const N: usize> Bq769x0<I2C, Enabled, N>
 where
     I2C: I2c<Error = E>,
 {
@@ -178,7 +178,7 @@ where
     sync(cfg(not(feature = "async")), self = "Bq769x0",),
     async(feature = "async", keep_self)
 )]
-impl<I2C, E> RegisterAccess<E> for Bq769x0<I2C, Enabled>
+impl<I2C, E, const N: usize> RegisterAccess<E> for Bq769x0<I2C, Enabled, N>
 where
     I2C: I2c<Error = E>,
 {
@@ -355,7 +355,7 @@ where
     sync(cfg(not(feature = "async")), self = "Bq769x0",),
     async(feature = "async", keep_self)
 )]
-impl<I2C, M, E> Bq769x0<I2C, M>
+impl<I2C, M, E, const N: usize> Bq769x0<I2C, M, N>
 where
     I2C: I2c<Error = E>,
     M: CrcMode,
@@ -389,7 +389,7 @@ where
     }
 
     /// Reads the cell voltages from the VCTXHi and VcTxLo registers.
-    pub async fn read_cell_voltages<const N: usize>(&mut self) -> Result<CellVoltages<N>, Error<E>>
+    pub async fn read_cell_voltages(&mut self) -> Result<CellVoltages<N>, Error<E>>
     where
         Self: RegisterAccess<E>,
     {
@@ -454,9 +454,7 @@ where
         // Let's use a placeholder for NUM_CELLS and address it if it becomes an issue.
         // For the test, NUM_CELLS is 5.
 
-        let num_cells_f32 = 5.0; // Assuming BQ76920 for this calculation based on the test context.
-                                 // A more robust solution would involve passing this as a parameter or
-                                 // deriving it from chip configuration.
+        let num_cells_f32 = N as f32;
 
         let pack_voltage_mv =
             (4.0 * adc_gain.get::<uom::si::electric_potential::microvolt>() * raw_voltage as f32)
@@ -538,17 +536,15 @@ where
         let raw_ts1 = ((raw_ts1_data[0] as u16) << 8) | (raw_ts1_data[1] as u16);
         temperatures.ts1 = convert_temp(raw_ts1, temp_sel);
 
-        #[cfg(any(feature = "bq76930", feature = "bq76940"))]
-        {
-            // TS2 (BQ76930/40 only)
+        // TS2 (BQ76930/40 only)
+        if N >= 10 { // BQ76930 and BQ76940 have TS2
             let raw_ts2_data = self.read_registers(Register::Ts2Hi, 2).await?;
             let raw_ts2 = ((raw_ts2_data[0] as u16) << 8) | (raw_ts2_data[1] as u16);
             temperatures.ts2 = Some(convert_temp(raw_ts2, temp_sel));
         }
 
-        #[cfg(feature = "bq76940")]
-        {
-            // TS3 (BQ76940 only)
+        // TS3 (BQ76940 only)
+        if N >= 15 { // BQ76940 has TS3
             let raw_ts3_data = self.read_registers(Register::Ts3Hi, 2).await?;
             let raw_ts3 = ((raw_ts3_data[0] as u16) << 8) | (raw_ts3_data[1] as u16);
             temperatures.ts3 = Some(convert_temp(raw_ts3, temp_sel));
@@ -611,17 +607,15 @@ where
         self.write_register(Register::CELLBAL1, cellbal1_value)
             .await?;
 
-        #[cfg(any(feature = "bq76930", feature = "bq76940"))]
-        {
-            // For BQ76930/40, also set CELLBAL2 (Cells 6-10)
+        // For BQ76930/40, also set CELLBAL2 (Cells 6-10)
+        if N >= 10 { // BQ76930 and BQ76940 have CELLBAL2
             let cellbal2_value = ((mask >> 5) & 0x1F) as u8;
             self.write_register(Register::CELLBAL2, cellbal2_value)
                 .await?;
         }
 
-        #[cfg(feature = "bq76940")]
-        {
-            // For BQ76940, also set CELLBAL3 (Cells 11-15)
+        // For BQ76940, also set CELLBAL3 (Cells 11-15)
+        if N >= 15 { // BQ76940 has CELLBAL3
             let cellbal3_value = ((mask >> 10) & 0x1F) as u8;
             self.write_register(Register::CELLBAL3, cellbal3_value)
                 .await?;

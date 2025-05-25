@@ -51,7 +51,7 @@ async fn main(_spawner: Spawner) {
         Config::default(),
     );
 
-    let mut bq = Bq769x0::new(i2c, 0x18);
+    let mut bq = Bq769x0::<_, _, NUM_CELLS>::new(i2c, 0x18);
 
     let battery_config = BatteryConfig::default();
 
@@ -99,7 +99,7 @@ async fn main(_spawner: Spawner) {
         info!("CC_EN enable attempt complete.");
 
         // Read Cell Voltages
-        match bq.read_cell_voltages::<NUM_CELLS>().await {
+        match bq.read_cell_voltages().await {
             Ok(voltages) => {
                 info!("Cell Voltages (mV):");
                 // BQ76920 supports up to 5 cells

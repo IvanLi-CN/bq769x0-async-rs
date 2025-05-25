@@ -36,12 +36,9 @@ opt-level = 's'
 overflow-checks = false
 
 [features]
-default = ["bq76920"]
+default = []
 async = ["dep:embedded-hal-async"]
 defmt = ["dep:defmt"] # Add defmt feature
-bq76920 = []
-bq76930 = []
-bq76940 = []
 
 [dev-dependencies.bq769x0-async-rs]
 path = "."

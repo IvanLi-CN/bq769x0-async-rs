@@ -15,7 +15,7 @@ mod tests {
             vec![0x01],
         )];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let status = bq.read_register(Register::SysStat).unwrap();
         assert_eq!(status, 0x01);
@@ -29,7 +29,7 @@ mod tests {
             vec![Register::SysCtrl1 as u8, 0x80],
         )];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         bq.write_register(Register::SysCtrl1, 0x80).unwrap();
         i2c.done();
@@ -69,7 +69,7 @@ mod tests {
             I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN2 as u8], vec![0x20]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let voltages: bq769x0_async_rs::CellVoltages<5> = bq.read_cell_voltages().unwrap();
 
@@ -131,7 +131,7 @@ mod tests {
             I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN2 as u8], vec![0x20]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let pack_voltage = bq.read_pack_voltage().unwrap();
 
@@ -157,7 +157,7 @@ mod tests {
             I2cTransaction::write_read(BQ76920_ADDR, vec![Register::Ts1Hi as u8], vec![0x0C, 0x45]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let temperatures = bq.read_temperatures().unwrap();
 
@@ -183,7 +183,7 @@ mod tests {
             I2cTransaction::write_read(BQ76920_ADDR, vec![Register::Ts1Hi as u8], vec![0x10, 0xDF]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let temperatures = bq.read_temperatures().unwrap();
 
@@ -206,7 +206,7 @@ mod tests {
             vec![0x03, 0xE8],
         )];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let current = bq.read_current().unwrap();
         assert_eq!(current.raw_cc, 1000);
@@ -219,7 +219,7 @@ mod tests {
             I2cTransaction::write(BQ76920_ADDR, vec![Register::SysStat as u8, 0xFF]), // Clear all flags
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         bq.clear_status_flags(0xFF).unwrap();
         i2c.done();
@@ -234,7 +234,7 @@ mod tests {
             I2cTransaction::write(BQ76920_ADDR, vec![Register::SysCtrl2 as u8, 0x01]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         bq.enable_charging().unwrap();
         i2c.done();
@@ -249,7 +249,7 @@ mod tests {
             I2cTransaction::write(BQ76920_ADDR, vec![Register::SysCtrl2 as u8, 0x00]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         bq.disable_charging().unwrap();
         i2c.done();
@@ -264,7 +264,7 @@ mod tests {
             I2cTransaction::write(BQ76920_ADDR, vec![Register::SysCtrl2 as u8, 0x02]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         bq.enable_discharging().unwrap();
         i2c.done();
@@ -278,7 +278,7 @@ mod tests {
             I2cTransaction::write(BQ76920_ADDR, vec![Register::CELLBAL1 as u8, 0x0F]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         bq.set_cell_balancing(0x000F).unwrap(); // Mask for cells 1-4
         i2c.done();
@@ -293,7 +293,7 @@ mod tests {
             I2cTransaction::write_read(BQ76920_ADDR, vec![Register::SysStat as u8], vec![0x10]),
         ];
         let mut i2c = I2cMock::new(&expectations);
-        let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
+        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(&mut i2c, BQ76920_ADDR);
 
         let is_overridden = bq.is_alert_overridden().unwrap();
         assert_eq!(is_overridden, true);
