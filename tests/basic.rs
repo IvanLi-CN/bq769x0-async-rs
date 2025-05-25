@@ -71,7 +71,7 @@ mod tests {
         let mut i2c = I2cMock::new(&expectations);
         let mut bq = Bq769x0::new_without_crc(&mut i2c, BQ76920_ADDR);
 
-        let voltages = bq.read_cell_voltages().unwrap();
+        let voltages: bq769x0_async_rs::CellVoltages<5> = bq.read_cell_voltages().unwrap();
 
         // Expected voltages in mV (approximate due to integer division)
         // Recalculate expected values based on the formula: V(cell) = GAIN x ADC(cell) + OFFSET
@@ -122,11 +122,7 @@ mod tests {
         // Mock data for VcTotalHi/Lo (2 bytes)
         // Raw ADC 41885 (0xA3FD)
         let expectations = [
-            I2cTransaction::write_read(
-                BQ76920_ADDR,
-                vec![Register::BatHi as u8],
-                vec![0xA3, 0xFD],
-            ),
+            I2cTransaction::write_read(BQ76920_ADDR, vec![Register::BatHi as u8], vec![0xA3, 0xFD]),
             // Read ADCGAIN1 (ADCGAIN<4:3> = 0b10) -> 0x08
             I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN1 as u8], vec![0x08]),
             // Read ADCOFFSET (0 mV)
@@ -144,8 +140,8 @@ mod tests {
         // GAIN = 0.430 mV/LSB, OFFSET = 0 mV, NUM_CELLS = 5
         assert_relative_eq!(
             pack_voltage.get::<millivolt>(),
-            64146.97, // Updated to actual value
-            epsilon = 0.005 // Reverted epsilon to a smaller value
+            64146.97,        // Updated to actual value
+            epsilon = 0.005  // Reverted epsilon to a smaller value
         );
         i2c.done();
     }

@@ -4,22 +4,30 @@
 #![allow(clippy::upper_case_acronyms)]
 
 // 定义 ISQ! 宏，使用 i32 作为底层存储类型
-mod units {
-    ISQ!(
-        uom::si,
-        f32,
-        (millimeter, kilogram, second, milliampere, kelvin, mole, candela)
+ISQ!(
+    uom::si,
+    f32,
+    (
+        millimeter,
+        kilogram,
+        second,
+        milliampere,
+        kelvin,
+        mole,
+        candela
+    )
+);
 
-    );
-}
-
-pub use units::*;
 
 #[cfg(test)]
 mod tests {
-    use uom::si::{electric_current::milliampere, electric_potential::millivolt, electrical_resistance::{milliohm, ohm}};
     use super::{ElectricCurrent, ElectricPotential, ElectricalResistance};
     use approx::assert_relative_eq;
+    use uom::si::{
+        electric_current::milliampere,
+        electric_potential::millivolt,
+        electrical_resistance::{milliohm, ohm},
+    };
 
     #[test]
     fn test_units() {

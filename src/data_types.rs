@@ -1,5 +1,10 @@
-use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance, ThermodynamicTemperature};
-use uom::si::{electric_current::milliampere, electric_potential::millivolt, electrical_resistance::milliohm, thermodynamic_temperature::kelvin};
+use crate::units::{
+    ElectricCurrent, ElectricPotential, ElectricalResistance, ThermodynamicTemperature,
+};
+use uom::si::{
+    electric_current::milliampere, electric_potential::millivolt, electrical_resistance::milliohm,
+    thermodynamic_temperature::kelvin,
+};
 
 /// Represents the measured cell voltages.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -7,6 +12,12 @@ pub struct CellVoltages<const N: usize> {
     /// Voltage of cell 1 to 15.
     /// The number of valid cells depends on the chip model (BQ76920: 5, BQ76930: 10, BQ76940: 15).
     pub voltages: [ElectricPotential; N],
+}
+
+impl<const N: usize> Default for CellVoltages<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> CellVoltages<N> {
@@ -28,6 +39,12 @@ pub struct Temperatures {
     pub ts3: Option<ThermodynamicTemperature>,
     /// Indicates if the temperature readings are Die Temp (false) or Thermistor resistance (true).
     pub is_thermistor: bool,
+}
+
+impl Default for Temperatures {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Temperatures {
@@ -147,7 +164,7 @@ pub struct BatteryConfig {
     // Add Rsense value for current calculation
     pub rsense: ElectricalResistance, // 串联电阻值
 
-                                             // Add other configuration fields as needed
+                                      // Add other configuration fields as needed
 }
 
 impl Default for BatteryConfig {

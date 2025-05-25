@@ -16,9 +16,9 @@ use embedded_hal_async::i2c::I2c;
 pub mod registers;
 use registers::*; // Import bit masks
 
-mod crc;
-mod data_types;
-mod errors;
+pub mod crc; // Make crc module public
+pub mod data_types;
+pub mod errors;
 pub mod units; // Make the units module public
 
 pub use data_types::{
@@ -389,16 +389,19 @@ where
     }
 
     /// Reads the cell voltages from the VCTXHi and VcTxLo registers.
-    pub async fn read_cell_voltages(&mut self) -> Result<CellVoltages<NUM_CELLS>, Error<E>> {
+    pub async fn read_cell_voltages<const N: usize>(&mut self) -> Result<CellVoltages<N>, Error<E>>
+    where
+        Self: RegisterAccess<E>,
+    {
         let start_reg = Register::Vc1Hi;
-        let len = NUM_CELLS * 2; // Each cell voltage is 2 bytes (Hi and Lo)
+        let len = N * 2; // Each cell voltage is 2 bytes (Hi and Lo)
         let raw_data = self.read_registers(start_reg, len).await?;
 
         let (adc_gain, adc_offset) = self.read_adc_calibration().await?;
 
         let mut cell_voltages = CellVoltages::new();
 
-        for i in 0..NUM_CELLS {
+        for i in 0..N {
             let hi_byte = raw_data[i * 2];
             let lo_byte = raw_data[i * 2 + 1];
             let raw_voltage = (((hi_byte & 0x3f) as u16) << 8) | (lo_byte as u16);
@@ -496,13 +499,13 @@ where
                 // V_TSX = (ADC in Decimal) x 382 μV/LSB
                 // R_TS = (10,000 × VTSX) ÷ (3.3 – VTSX)
                 let v_tsx_mv = raw_ts as f32 * adc_lsb_microvolt / 1000.0; // Convert to mV
-                let r_ts = (10_000.0 * v_tsx_mv) / (3300.0 - v_tsx_mv); // 3.3V pull-up, convert to mV for consistency
+                let _r_ts = (10_000.0 * v_tsx_mv) / (3300.0 - v_tsx_mv); // 3.3V pull-up, convert to mV for consistency
 
                 #[cfg(feature = "defmt")]
                 defmt::warn!(
                     "External thermistor: V_TSX = {} mV, R_TS = {} Ohm. Conversion to actual temperature requires thermistor datasheet lookup.",
                     v_tsx_mv,
-                    r_ts
+                    _r_ts
                 );
 
                 // Returning V_TSX in mV as a proxy. User needs to implement proper thermistor lookup.
@@ -762,11 +765,11 @@ where
 
         // 2. Find the closest supported voltage thresholds and get their register bit values
         let scd_threshold_bits = Self::find_closest_scd_threshold_bits(
-            scd_target_voltage.get::<millivolt>() as f32,
+            scd_target_voltage.get::<millivolt>(),
             config.protection_config.rsns_enable,
         );
         let ocd_threshold_bits = Self::find_closest_ocd_threshold_bits(
-            ocd_target_voltage.get::<millivolt>() as f32,
+            ocd_target_voltage.get::<millivolt>(),
             config.protection_config.rsns_enable,
         );
 
