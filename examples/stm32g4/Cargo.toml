@@ -45,12 +45,6 @@ uom = { version = "0.37", default-features = false, features = ["si"] }
 
 bq769x0-async-rs = { version = "0.1.1", path = "../../", features = ["async", "defmt"] }
 
-[features]
-default = ["defmt"]
-defmt = []
-async = []
-stm32g431cb = []
-
 [profile.dev]
 codegen-units = 1
 debug = 2

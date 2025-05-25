@@ -3,7 +3,6 @@
 const NUM_CELLS: usize = 5;
 use defmt::{error, info};
 
-use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_stm32::{
     bind_interrupts,
@@ -11,7 +10,6 @@ use embassy_stm32::{
     peripherals::I2C1,
     time::Hertz,
 };
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -28,9 +26,6 @@ bind_interrupts!(struct Irqs {
     I2C1_EV => i2c::EventInterruptHandler<I2C1>;
     I2C1_ER => i2c::ErrorInterruptHandler<I2C1>;
 });
-
-type I2cBus<'d> = Mutex<NoopRawMutex, I2c<'d, I2C1>>;
-type MyI2cDevice<'d> = I2cDevice<'d, NoopRawMutex, I2c<'d, I2C1>>;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
