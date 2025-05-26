@@ -195,3 +195,41 @@ impl Default for BatteryConfig {
         }
     }
 }
+
+/// Represents the charge/discharge MOS status.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct MosStatus {
+    pub charge_on: bool,
+    pub discharge_on: bool,
+}
+
+impl MosStatus {
+    pub fn new(sys_ctrl2_byte: u8) -> Self {
+        Self {
+            charge_on: (sys_ctrl2_byte & 0b0000_0001) != 0,
+            discharge_on: (sys_ctrl2_byte & 0b0000_0010) != 0,
+        }
+    }
+}
+
+/// Represents the BQ76920 measurements.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Bq76920Measurements<const N: usize> {
+    pub cell_voltages: CellVoltages<N>,
+    pub temperatures: Temperatures,
+    pub current: ElectricCurrent,
+    pub system_status: SystemStatus,
+    pub mos_status: MosStatus,
+}
+
+impl<const N: usize> Default for Bq76920Measurements<N> {
+    fn default() -> Self {
+        Self {
+            cell_voltages: CellVoltages::new(),
+            temperatures: Temperatures::new(),
+            current: ElectricCurrent::new::<milliampere>(0.0),
+            system_status: SystemStatus::new(0),
+            mos_status: MosStatus::new(0),
+        }
+    }
+}
