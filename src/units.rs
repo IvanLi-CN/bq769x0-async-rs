@@ -3,7 +3,7 @@
 #![allow(non_camel_case_types)]
 #![allow(clippy::upper_case_acronyms)]
 
-// 定义 ISQ! 宏，使用 i32 作为底层存储类型
+// 定义 ISQ! 宏，使用 f32 作为底层存储类型
 ISQ!(
     uom::si,
     f32,

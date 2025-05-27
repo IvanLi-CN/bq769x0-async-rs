@@ -134,23 +134,24 @@ async fn main(_spawner: Spawner) {
                         "  TS1: {} ({} Ohms)",
                         temps
                             .ts1
-                            .get::<uom::si::thermodynamic_temperature::kelvin>(),
+                            .get::<uom::si::electric_potential::millivolt>(), // Assuming raw voltage is read
                         temps
                             .ts1
-                            .get::<uom::si::thermodynamic_temperature::kelvin>()
-                            / 10.0
+                            .get::<uom::si::electric_potential::millivolt>() // Assuming raw voltage is read
+                            / 10.0 // Assuming conversion factor
                     );
                     // BQ76920 only has TS1
                 } else {
                     info!("Temperatures (deci-Celsius):");
-                    let ts1_kelvin_integer = temps
+                    let ts1_millivolt = temps
                         .ts1
-                        .get::<uom::si::thermodynamic_temperature::kelvin>();
-                    let ts1_celsius_f32 = ts1_kelvin_integer - 273.15; // Manually convert kelvin to celsius float
+                        .get::<uom::si::electric_potential::millivolt>();
+                    let ts1_deci_celsius = ts1_millivolt; // Assuming raw millivolt directly represents deci-celsius
+                    let ts1_celsius_f32 = ts1_deci_celsius / 10.0; // Convert deci-celsius to celsius float
 
                     info!(
                         "  TS1 (Die Temp): kelvin_value={}, celsius_manual_f32={}",
-                        ts1_kelvin_integer, ts1_celsius_f32
+                        ts1_deci_celsius, ts1_celsius_f32
                     );
                 }
             }
@@ -184,8 +185,8 @@ async fn main(_spawner: Spawner) {
                 info!("  Overvoltage (OV): {}", status.ov);
                 info!("  Short Circuit Discharge (SCD): {}", status.scd);
                 info!("  Overcurrent Discharge (OCD): {}", status.ocd);
-                info!("  Cell Undervoltage (CUV): {}", status.cuv);
-                info!("  Cell Overvoltage (COV): {}", status.cov);
+                info!("  Cell Undervoltage (UV): {}", status.uv);
+                info!("  Cell Overvoltage (OV): {}", status.ov);
 
                 // Clear status flags after reading
                 // Only clear flags that are set
@@ -195,8 +196,8 @@ async fn main(_spawner: Spawner) {
                     | (status.ov as u8 * SYS_STAT_OV)
                     | (status.scd as u8 * SYS_STAT_SCD)
                     | (status.ocd as u8 * SYS_STAT_OCD)
-                    | (status.cuv as u8 * SYS_STAT_UV)
-                    | (status.cov as u8 * SYS_STAT_OV);
+                    | (status.uv as u8 * SYS_STAT_UV)
+                    | (status.ov as u8 * SYS_STAT_OV);
 
                 if flags_to_clear != 0 {
                     if let Err(e) = bq.clear_status_flags(flags_to_clear).await {

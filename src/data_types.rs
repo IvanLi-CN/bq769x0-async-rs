@@ -1,9 +1,6 @@
-use crate::units::{
-    ElectricCurrent, ElectricPotential, ElectricalResistance, ThermodynamicTemperature,
-};
+use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance};
 use uom::si::{
     electric_current::milliampere, electric_potential::millivolt, electrical_resistance::milliohm,
-    thermodynamic_temperature::kelvin,
 };
 
 /// Represents the measured cell voltages.
@@ -31,12 +28,12 @@ impl<const N: usize> CellVoltages<N> {
 /// Represents the measured temperatures.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Temperatures {
-    /// Temperature from TS1 sensor.
-    pub ts1: ThermodynamicTemperature,
-    /// Temperature from TS2 sensor (BQ76930/40 only).
-    pub ts2: Option<ThermodynamicTemperature>,
-    /// Temperature from TS3 sensor (BQ76940 only).
-    pub ts3: Option<ThermodynamicTemperature>,
+    /// Voltage from TS1 sensor (if external thermistor) or Die Temperature (if internal).
+    pub ts1: ElectricPotential,
+    /// Voltage from TS2 sensor (BQ76930/40 only) or Die Temperature.
+    pub ts2: Option<ElectricPotential>,
+    /// Voltage from TS3 sensor (BQ76940 only) or Die Temperature.
+    pub ts3: Option<ElectricPotential>,
     /// Indicates if the temperature readings are Die Temp (false) or Thermistor resistance (true).
     pub is_thermistor: bool,
 }
@@ -50,7 +47,7 @@ impl Default for Temperatures {
 impl Temperatures {
     pub fn new() -> Self {
         Self {
-            ts1: ThermodynamicTemperature::new::<kelvin>(0.0),
+            ts1: ElectricPotential::new::<millivolt>(0.0),
             ts2: None,
             ts3: None,
             is_thermistor: false,

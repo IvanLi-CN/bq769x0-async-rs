@@ -170,5 +170,3 @@ pub const CELLBAL3_BAL12: u8 = 1 << 1;
 pub const CELLBAL3_BAL13: u8 = 1 << 2;
 pub const CELLBAL3_BAL14: u8 = 1 << 3;
 pub const CELLBAL3_BAL15: u8 = 1 << 4;
-
-// Number of cells

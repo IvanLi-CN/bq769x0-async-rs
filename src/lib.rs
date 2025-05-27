@@ -30,12 +30,8 @@ use errors::Error;
 pub use crc::{calculate_crc, CrcMode, Disabled, Enabled};
 
 use crate::units::ElectricalResistance;
-use crate::units::{ElectricCurrent, ElectricPotential, ThermodynamicTemperature}; // 从 crate::units 导入基本类型
+use crate::units::{ElectricCurrent, ElectricPotential};
 use uom::si::electric_potential::millivolt;
-use uom::si::thermodynamic_temperature::kelvin; // 从 crate::units 导入 ElectricalResistance
-                                                // 导入 milliohm
-                                                // 确保 hundred_micro_ohm 导入路径正确
-
 /// BQ769x0 driver
 pub struct Bq769x0<I2C, M: CrcMode, const N: usize>
 where
@@ -508,14 +504,15 @@ where
         if !temp_sel {
             // Die Temp
             // Datasheet section 8.1.2.4 Temperature
-            // T(C) = (ADC(TS) * 1.265V / 4095) - 273.15
-            // ADC(TS) is the 12-bit ADC reading.
-            // 1.265V is the internal reference voltage.
-            // 4095 is 2^12 - 1.
-            let temp_c = (ts1_raw as f32 * 1.265 / 4095.0) * 1000.0 - 273.15; // Convert to mV first, then to C
-            temperatures.ts1 = ThermodynamicTemperature::new::<
-                uom::si::thermodynamic_temperature::degree_celsius,
-            >(temp_c);
+            // Die Temp
+            // Datasheet section 8.1.2.4 Temperature
+            // V_TSX = ADC(TS) * 382 μV/LSB
+            let v_tsx_uv = ts1_raw as f32 * 382.0; // Calculate V_TSX in μV
+            let v_tsx_mv = v_tsx_uv / 1000.0; // Convert V_TSX to mV
+
+            // For internal die temp, we store the raw voltage reading.
+            // Conversion to actual temperature (Celsius/Kelvin) will be done by the caller.
+            temperatures.ts1 = ElectricPotential::new::<millivolt>(v_tsx_mv);
             temperatures.is_thermistor = false;
         } else {
             // External Thermistor
@@ -525,7 +522,9 @@ where
             let v_tsx_mv = (ts1_raw as f32
                 * adc_gain.get::<uom::si::electric_potential::microvolt>())
                 / 1000.0;
-            temperatures.ts1 = ThermodynamicTemperature::new::<kelvin>(v_tsx_mv); // Store as mV, interpreted as Kelvin for testing
+            // For external thermistor, we store the raw voltage reading.
+            // Conversion to actual thermistor resistance and then temperature will be done by the caller.
+            temperatures.ts1 = ElectricPotential::new::<millivolt>(v_tsx_mv);
             temperatures.is_thermistor = true;
         }
 
@@ -537,16 +536,14 @@ where
             let ts2_raw = ((ts2_hi as u16) << 8) | (ts2_lo as u16);
 
             if !temp_sel {
-                let temp_c = (ts2_raw as f32 * 1.265 / 4095.0) * 1000.0 - 273.15;
-                temperatures.ts2 = Some(ThermodynamicTemperature::new::<
-                    uom::si::thermodynamic_temperature::degree_celsius,
-                >(temp_c));
+                let v_tsx_mv = (ts2_raw as f32 * 1.265 / 4095.0) * 1000.0;
+                temperatures.ts2 = Some(ElectricPotential::new::<millivolt>(v_tsx_mv));
             } else {
                 let (adc_gain, _) = self.read_adc_calibration().await?;
                 let v_tsx_mv = (ts2_raw as f32
                     * adc_gain.get::<uom::si::electric_potential::microvolt>())
                     / 1000.0;
-                temperatures.ts2 = Some(ThermodynamicTemperature::new::<kelvin>(v_tsx_mv));
+                temperatures.ts2 = Some(ElectricPotential::new::<millivolt>(v_tsx_mv));
             }
         }
 
@@ -557,16 +554,14 @@ where
             let ts3_raw = ((ts3_hi as u16) << 8) | (ts3_lo as u16);
 
             if !temp_sel {
-                let temp_c = (ts3_raw as f32 * 1.265 / 4095.0) * 1000.0 - 273.15;
-                temperatures.ts3 = Some(ThermodynamicTemperature::new::<
-                    uom::si::thermodynamic_temperature::degree_celsius,
-                >(temp_c));
+                let v_tsx_mv = (ts3_raw as f32 * 1.265 / 4095.0) * 1000.0;
+                temperatures.ts3 = Some(ElectricPotential::new::<millivolt>(v_tsx_mv));
             } else {
                 let (adc_gain, _) = self.read_adc_calibration().await?;
                 let v_tsx_mv = (ts3_raw as f32
                     * adc_gain.get::<uom::si::electric_potential::microvolt>())
                     / 1000.0;
-                temperatures.ts3 = Some(ThermodynamicTemperature::new::<kelvin>(v_tsx_mv));
+                temperatures.ts3 = Some(ElectricPotential::new::<millivolt>(v_tsx_mv));
             }
         }
 
@@ -738,9 +733,9 @@ where
         // then writing 0x03 to SYS_CTRL1 twice.
         self.write_register(Register::SysCtrl1, 0x00).await?;
         self.write_register(Register::SysCtrl2, 0x00).await?;
-        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_A | SYS_CTRL1_SHUT_B)
+        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_B) // Write #1: SHUT_B = 1
             .await?;
-        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_A | SYS_CTRL1_SHUT_B)
+        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_A) // Write #2: SHUT_A = 1
             .await?;
         Ok(())
     }
@@ -850,12 +845,25 @@ where
         // OV_TRIP_REG = (V_OV_TRIP - ADCOFFSET) * 1000 / ADCGAIN
         let (adc_gain, adc_offset) = self.read_adc_calibration().await?;
 
-        let ov_trip_raw =
+        // OV_TRIP_FULL = (V_OV_TRIP - ADCOFFSET) * 1000 / ADCGAIN
+        let ov_trip_full =
             ((config.overvoltage_trip.get::<millivolt>() - adc_offset.get::<millivolt>()) * 1000.0
-                / adc_gain.get::<uom::si::electric_potential::microvolt>()) as u8;
-        let uv_trip_raw =
+                / adc_gain.get::<uom::si::electric_potential::microvolt>()) as u16; // Use u16 for 14-bit value
+
+        // Extract middle 8 bits: (ov_trip_full >> 4) & 0xFF
+        // Datasheet says upper 2 MSB preset to "10", lower 4 LSB preset to "1000".
+        // So the 8 bits are (14-bit value >> 4) & 0xFF.
+        let ov_trip_raw = ((ov_trip_full >> 4) & 0xFF) as u8;
+
+        // UV_TRIP_FULL = (V_UV_TRIP - ADCOFFSET) * 1000 / ADCGAIN
+        let uv_trip_full =
             ((config.undervoltage_trip.get::<millivolt>() - adc_offset.get::<millivolt>()) * 1000.0
-                / adc_gain.get::<uom::si::electric_potential::microvolt>()) as u8;
+                / adc_gain.get::<uom::si::electric_potential::microvolt>()) as u16; // Use u16 for 14-bit value
+
+        // Extract middle 8 bits: (uv_trip_full >> 4) & 0xFF
+        // Datasheet says upper 2 MSB preset to "01", lower 4 LSB preset to "0000".
+        // So the 8 bits are (14-bit value >> 4) & 0xFF.
+        let uv_trip_raw = ((uv_trip_full >> 4) & 0xFF) as u8;
 
         self.write_register(Register::OvTrip, ov_trip_raw).await?;
         self.write_register(Register::UvTrip, uv_trip_raw).await?;

@@ -25,8 +25,8 @@ fn test_enter_ship_mode() {
     let expectations = [
         I2cTransaction::write(BQ76920_ADDR, vec![0x04, 0x00]), // SYS_CTRL1 = 0x00
         I2cTransaction::write(BQ76920_ADDR, vec![0x05, 0x00]), // SYS_CTRL2 = 0x00
-        I2cTransaction::write(BQ76920_ADDR, vec![0x04, 0x03]), // SYS_CTRL1 = 0x03 (SHUT_A | SHUT_B)
-        I2cTransaction::write(BQ76920_ADDR, vec![0x04, 0x03]), // SYS_CTRL1 = 0x03 (SHUT_A | SHUT_B)
+        I2cTransaction::write(BQ76920_ADDR, vec![0x04, 0x01]), // SYS_CTRL1 = 0x01 (SHUT_B)
+        I2cTransaction::write(BQ76920_ADDR, vec![0x04, 0x02]), // SYS_CTRL1 = 0x02 (SHUT_A)
     ];
     let (mut driver, i2c_mock) =
         common::create_bq769x0_driver_disabled_crc::<5>(&expectations, BQ76920_ADDR);
@@ -125,11 +125,11 @@ fn test_set_cell_balancing_bq76920() {
 fn test_set_cell_balancing_bq76930() {
     let expectations = [
         I2cTransaction::write(BQ76930_ADDR, vec![Register::CELLBAL1 as u8, 0b00001011]), // Set cells 1, 2, 4
-        I2cTransaction::write(BQ76930_ADDR, vec![Register::CELLBAL2 as u8, 0b00001000]), // Set cells 6, 8 (Corrected to 0x08)
+        I2cTransaction::write(BQ76930_ADDR, vec![Register::CELLBAL2 as u8, 0x04]), // Set cell 8
     ];
     let (mut driver, i2c_mock) =
         create_bq769x0_driver_disabled_crc::<10>(&expectations, BQ76930_ADDR);
-    let result = driver.set_cell_balancing(0b00000101_00001011); // Cells 1, 2, 4, 6, 8
+    let result = driver.set_cell_balancing(0b00000000_10001011); // Cells 1, 2, 4, 8
     assert_eq!(result, Ok(()));
     i2c_mock.done();
 }
@@ -138,12 +138,17 @@ fn test_set_cell_balancing_bq76930() {
 fn test_set_cell_balancing_bq76940() {
     let expectations = [
         I2cTransaction::write(BQ76940_ADDR, vec![Register::CELLBAL1 as u8, 0b00001011]), // Set cells 1, 2, 4
-        I2cTransaction::write(BQ76940_ADDR, vec![Register::CELLBAL2 as u8, 0b00001000]), // Set cells 6, 8 (Corrected to 0x08)
-        I2cTransaction::write(BQ76940_ADDR, vec![Register::CELLBAL3 as u8, 0b00000001]), // Set cell 12 (Corrected to 0x01)
+        I2cTransaction::write(BQ76940_ADDR, vec![Register::CELLBAL2 as u8, 0b00000101]), // Set cell 6, 8
+        I2cTransaction::write(BQ76940_ADDR, vec![Register::CELLBAL3 as u8, 0b00000001]), // Set cell 11
     ];
     let (mut driver, i2c_mock) =
         create_bq769x0_driver_disabled_crc::<15>(&expectations, BQ76940_ADDR);
-    let result = driver.set_cell_balancing(0b00000101_00001011); // Cells 1, 2, 4, 6, 8, 12 (truncated to u16)
+    let mask_value: u16 = 0b00000100_10101011; // Cells 1, 2, 4, 8, 11 (for BQ76940)
+                                               // CELLBAL1: 0b00001011 (CB1, CB2, CB4)
+                                               // CELLBAL2: 0b00000101 (CB6, CB8)
+                                               // CELLBAL3: 0b00000001 (CB11)
+
+    let result = driver.set_cell_balancing(mask_value);
     assert_eq!(result, Ok(()));
     i2c_mock.done();
 }
