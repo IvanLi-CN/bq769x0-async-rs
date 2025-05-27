@@ -1,128 +1,77 @@
-# BQ769x0 驱动重构计划
+# BQ769x0 系列设备测试覆盖计划
 
-### 目标
+## 当前测试用例的局限性
 
-根据电池节数判断芯片型号，移除 `Cargo.toml` 中不必要的 `bq76920`、`bq76930` 和 `bq76940` features。
-重构 `Bq769x0` 结构体，增加泛型 `N` 表示电池节数，并调整相关函数以使用此泛型。
-更新 `examples/stm32g4` 中的代码以适应新的泛型结构。
-通过 `cargo check`、`cargo build` 和 `cargo test` 确保代码正确性。
+当前的 `tests/basic.rs` 文件主要针对 `BQ76920` 设备进行了测试，未能覆盖 BQ769x0 系列的所有型号（BQ76920、BQ76930、BQ76940）。主要体现在：
 
-### 评估结果
+* 所有测试都使用 `BQ76920_ADDR`。
+* `Bq769x0` 实例的泛型参数固定为 `5` 节电池。
+* 温度传感器测试断言 `ts2` 和 `ts3` 为 `None`。
+* 存在明确的 `TODO` 注释，指出缺少 `BQ76930` 和 `BQ76940` 的电池平衡测试。
 
-将 `N` 放在 `Bq769x0` 结构体上（即 `pub struct Bq769x0<I2C, M: CrcMode, const N: usize>`）是更优的选择。
-虽然在创建 `Bq769x0` 实例时需要显式指定 `N`，但这是 Rust `const` 泛型的固有特性，且能更好地体现芯片型号与电池节数之间的强关联性。
+## BQ769x0 系列设备差异分析
 
-### 详细重构计划
+根据 `bq76920.pdf` 数据手册，BQ769x0 系列的主要差异在于支持的电池节数和温度传感器数量：
+
+* **BQ76920**: 支持 3-5 节电池，1 个温度传感器 (TS1)。
+* **BQ76930**: 支持 6-10 节电池，2 个温度传感器 (TS1, TS2)。
+* **BQ76940**: 支持 9-15 节电池，3 个温度传感器 (TS1, TS2, TS3)。
+* 所有型号都支持 I2C 通信，默认地址为 `0x08`，部分型号有 `0x18` 选项。
+* 电池平衡寄存器：`BQ76920` 使用 `CELLBAL1`；`BQ76930` 使用 `CELLBAL1` 和 `CELLBAL2`；`BQ76940` 使用 `CELLBAL1`、`CELLBAL2` 和 `CELLBAL3`。
+
+## 详细测试计划
+
+本计划旨在实现对所有 BQ769x0 系列设备（BQ76920、BQ76930、BQ76940）的全面测试覆盖。
+
+**核心目标：**
+
+1. **扩展现有测试框架：** 利用 `embedded_hal_mock` 模拟 I2C 通信，保持测试的独立性和可重复性。
+2. **新增型号特定测试：** 为 `BQ76930` 和 `BQ76940` 添加新的测试用例，覆盖其特有功能和配置。
+3. **泛型化通用测试：** 尽可能将现有测试用例泛型化，使其能够轻松应用于所有型号，减少代码重复。
+4. **验证不同电池节数：** 针对每个型号支持的电池节数范围，至少测试其最小和最大节数配置。
+5. **持续集成验证：** 每次修改后及时运行 `cargo test` 命令，确保代码的正确性。
+
+**具体步骤：**
+
+1. **分析 `src/lib.rs` 和 `src/registers.rs`：**
+    * 深入理解 `Bq769x0` 结构体如何通过泛型参数 `CELLS` 处理不同电池节数。
+    * 检查 `src/registers.rs` 中是否已定义所有型号特有的寄存器（如 `CELLBAL2`、`CELLBAL3`、`TS2_HI/LO`、`TS3_HI/LO` 等）。如果缺少，需要先添加这些定义。
+
+2. **重构和扩展 `tests/basic.rs`：**
+    * **为 `BQ76930` 添加测试：**
+        * 定义 `BQ76930_ADDR` (如果与 `BQ76920` 不同，或需要测试 `0x18` 地址)。
+        * 创建 `Bq769x0::<_, _, 10>::new_without_crc(...)` 实例（或根据需要测试 6 节电池）。
+        * 添加 `test_read_cell_voltages_bq76930`：模拟 10 节电池的电压读取。
+        * 添加 `test_read_temperatures_bq76930`：模拟读取 TS1 和 TS2 温度。
+        * 添加 `test_set_cell_balancing_bq76930`：测试 `CELLBAL1` 和 `CELLBAL2` 寄存器。
+    * **为 `BQ76940` 添加测试：**
+        * 定义 `BQ76940_ADDR` (如果与 `BQ76920` 不同，或需要测试 `0x18` 地址)。
+        * 创建 `Bq769x0::<_, _, 15>::new_without_crc(...)` 实例（或根据需要测试 9 节电池）。
+        * 添加 `test_read_cell_voltages_bq76940`：模拟 15 节电池的电压读取。
+        * 添加 `test_read_temperatures_bq76940`：模拟读取 TS1、TS2 和 TS3 温度。
+        * 添加 `test_set_cell_balancing_bq76940`：测试 `CELLBAL1`、`CELLBAL2` 和 `CELLBAL3` 寄存器。
+    * **泛型化通用测试：** 考虑将 `test_read_register`、`test_write_register`、`test_read_pack_voltage`、`test_read_current`、`test_clear_status_flags`、`test_enable_charging`、`test_disable_charging`、`test_enable_discharging`、`test_is_alert_overridden` 等测试重构为泛型函数或使用宏，以便它们可以针对不同型号和电池节数进行复用。
+
+3. **运行 `cargo test`：** 在每次完成一个型号或一组功能的测试用例编写后，立即运行 `cargo test` 命令，以验证代码的正确性并及时发现问题。
+
+## 测试流程图
 
 ```mermaid
 graph TD
-    A[开始] --> B{评估并确认重构方案};
-    B --> C{修改 Cargo.toml 移除 features};
-    C --> D{修改 src/lib.rs: 调整 Bq769x0 结构体泛型};
-    D --> E{修改 src/lib.rs: 更新 new_without_crc 和 new 函数};
-    E --> F{修改 src/lib.rs: 调整 read_cell_voltages 函数};
-    F --> G{修改 src/lib.rs: 调整 read_pack_voltage 函数};
-    G --> H{修改 src/lib.rs: 检查并调整其他受影响代码};
-    H --> I{修改 examples/stm32g4/src/main.rs};
-    I --> J{运行 cargo check};
-    J --> K{运行 cargo build};
-    K --> L{运行 cargo test};
-    L --> M{调整 examples/stm32g4 中的代码并确保正确};
-    M --> N[完成];
-```
-
-**步骤分解：**
-
-1. **评估并确认重构方案**
-    * 已完成，并倾向于将 `N` 放在 `Bq769x0` 结构体上。
-
-2. **修改 `Cargo.toml` 移除 features**
-    * 移除 `[features]` 部分的 `bq76920 = []`、`bq76930 = []` 和 `bq76940 = []`。
-    * 修改 `default = ["bq76920"]` 为 `default = []` 或移除 `default` feature。
-
-3. **修改 `src/lib.rs`: 调整 `Bq769x0` 结构体泛型**
-    * 将 `Bq769x0` 结构体定义修改为：
-
-        ```rust
-        pub struct Bq769x0<I2C, M: CrcMode, const N: usize>
-        where
-            I2C: I2c,
-        {
-            address: u8,
-            i2c: I2C,
-            _crc_mode: core::marker::PhantomData<M>,
-        }
-        ```
-
-4. **修改 `src/lib.rs`: 更新 `new_without_crc` 和 `new` 函数**
-    * 修改 `new_without_crc` 函数签名：
-
-        ```rust
-        pub fn new_without_crc<const N: usize>(i2c: I2C, address: u8) -> Bq769x0<I2C, Disabled, N> {
-            Bq769x0 {
-                address,
-                i2c,
-                _crc_mode: core::marker::PhantomData,
-            }
-        }
-        ```
-
-    * 修改 `new` 函数签名：
-
-        ```rust
-        pub fn new<const N: usize>(i2c: I2C, address: u8) -> Bq769x0<I2C, Enabled, N> {
-            Bq769x0 {
-                address,
-                i2c,
-                _crc_mode: core::marker::PhantomData,
-            }
-        }
-        ```
-
-5. **修改 `src/lib.rs`: 调整 `read_cell_voltages` 函数**
-    * 移除 `read_cell_voltages` 函数自身的 `const N: usize` 泛型参数。
-    * 函数签名将变为：
-
-        ```rust
-        pub async fn read_cell_voltages(&mut self) -> Result<CellVoltages<N>, Error<E>>
-        where
-            Self: RegisterAccess<E>,
-        {
-            // ...
-        }
-        ```
-
-    * `CellVoltages<N>` 将直接使用 `Bq769x0` 结构体上的 `N`。
-
-6. **修改 `src/lib.rs`: 调整 `read_pack_voltage` 函数**
-    * 在 `read_pack_voltage` 函数中，使用 `N` 来代替硬编码的 `num_cells_f32`。
-
-        ```rust
-        let num_cells_f32 = N as f32;
-        ```
-
-7. **修改 `src/lib.rs`: 检查并调整其他受影响代码**
-    * 检查 `CellVoltages` 结构体定义，确保它接受 `const N: usize` 泛型。
-    * 检查所有使用 `Bq769x0` 的地方，确保它们都正确地使用了新的泛型参数。
-    * 检查 `data_types.rs` 中是否有与电池节数相关的常量或结构体需要调整。
-
-8. **修改 `examples/stm32g4/src/main.rs`**
-    * 更新 `Bq769x0` 实例的创建方式，例如：
-
-        ```rust
-        let mut bq = Bq769x0::<_, _, 5>::new_without_crc(i2c, address);
-        ```
-
-    * 更新 `read_cell_voltages` 的调用方式，移除 `N` 泛型参数。
-
-9. **运行 `cargo check`**
-    * 检查语法和类型错误。
-
-10. **运行 `cargo build`**
-    * 编译项目。
-
-11. **运行 `cargo test`**
-    * 运行单元测试和集成测试。
-
-12. **调整 `examples/stm32g4` 中的代码并确保正确**
-    * 这可能涉及到修改 `examples/stm32g4/Cargo.toml` 和 `examples/stm32g4/src/main.rs`，以适应 `bq769x0-async-rs` 库的泛型变化。
+    A[开始任务] --> B{分析现有测试和数据手册};
+    B --> C{确定不同型号差异和测试需求};
+    C --> D{规划测试用例结构};
+    D --> E{检查并完善 src/registers.rs};
+    E --> F{编写 BQ76930 测试用例};
+    F --> G{运行 cargo test};
+    G -- 成功 --> H{编写 BQ76940 测试用例};
+    G -- 失败 --> I{调试并修复};
+    I --> F;
+    H --> J{运行 cargo test};
+    J -- 成功 --> K{泛型化通用测试用例};
+    J -- 失败 --> L{调试并修复};
+    L --> H;
+    K --> M{运行 cargo test};
+    M -- 成功 --> N[完成测试覆盖];
+    M -- 失败 --> O{调试并修复};
+    O --> K;
