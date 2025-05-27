@@ -22,15 +22,15 @@ pub mod errors;
 pub mod units; // Make the units module public
 
 pub use data_types::{
-    BatteryConfig, CellVoltages, CoulombCounter, OcdDelay, ProtectionConfig, ScdDelay,
-    SystemStatus, TempSensor, Temperatures, UvOvDelay,
+    BatteryConfig, Bq76920Measurements, CellVoltages, CoulombCounter, MosStatus, OcdDelay,
+    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, Temperatures, UvOvDelay,
 };
 use errors::Error;
 
 pub use crc::{calculate_crc, CrcMode, Disabled, Enabled};
 
 use crate::units::ElectricalResistance;
-use crate::units::{ElectricCurrent, ElectricPotential}; // 从 crate::units 导入基本类型
+use crate::units::{ElectricCurrent, ElectricPotential, ThermodynamicTemperature}; // 从 crate::units 导入基本类型
 use uom::si::electric_potential::millivolt;
 use uom::si::thermodynamic_temperature::kelvin; // 从 crate::units 导入 ElectricalResistance
                                                 // 导入 milliohm
@@ -55,6 +55,8 @@ where
 pub trait RegisterAccess<E>
 where
     Self: Sized,
+    E: PartialEq, // Add PartialEq constraint for E
+    E: PartialEq,
 {
     /// The buffer type used for reading multiple registers.
     type ReadBuffer: Deref<Target = [u8]>;
@@ -83,6 +85,8 @@ where
 impl<I2C, E, const N: usize> Bq769x0<I2C, Disabled, N>
 where
     I2C: I2c<Error = E>,
+    E: PartialEq, // Add PartialEq constraint for E
+    E: PartialEq, // Add PartialEq constraint for E
 {
     /// Creates a new instance of the BQ769x0 driver in Disabled CRC mode.
     ///
@@ -106,6 +110,8 @@ where
 impl<I2C, E, const N: usize> RegisterAccess<E> for Bq769x0<I2C, Disabled, N>
 where
     I2C: I2c<Error = E>,
+    E: PartialEq, // Add PartialEq constraint for E
+    E: PartialEq, // Add PartialEq constraint for E
 {
     type ReadBuffer = heapless::Vec<u8, 30>;
 
@@ -158,6 +164,8 @@ where
 impl<I2C, E, const N: usize> Bq769x0<I2C, Enabled, N>
 where
     I2C: I2c<Error = E>,
+    E: PartialEq, // Add PartialEq constraint for E
+    E: PartialEq, // Add PartialEq constraint for E
 {
     /// Creates a new instance of the BQ769x0 driver in Enabled CRC mode.
     ///
@@ -181,6 +189,8 @@ where
 impl<I2C, E, const N: usize> RegisterAccess<E> for Bq769x0<I2C, Enabled, N>
 where
     I2C: I2c<Error = E>,
+    E: PartialEq, // Add PartialEq constraint for E
+    E: PartialEq, // Add PartialEq constraint for E
 {
     type ReadBuffer = heapless::Vec<u8, 30>;
 
@@ -360,6 +370,8 @@ where
     I2C: I2c<Error = E>,
     M: CrcMode,
     Self: RegisterAccess<E>,
+    E: PartialEq, // Add PartialEq constraint for E
+    E: PartialEq, // Add PartialEq constraint for E
 {
     /// Reads the ADCGAIN and ADCOFFSET registers and calculates the actual GAIN and OFFSET values.
     async fn read_adc_calibration(
@@ -486,95 +498,128 @@ where
         let temp_sel = (sys_ctrl1 & SYS_CTRL1_TEMP_SEL) != 0;
 
         let mut temperatures = Temperatures::new();
-        let adc_lsb_microvolt = 382.0; // 382 μV/LSB
 
-        // Helper closure for temperature conversion
-        let convert_temp = |raw_ts: u16,
-                            is_thermistor: bool|
-         -> crate::units::ThermodynamicTemperature {
-            if is_thermistor {
-                // External Thermistor (TEMP_SEL = 1)
-                // V_TSX = (ADC in Decimal) x 382 μV/LSB
-                // R_TS = (10,000 × VTSX) ÷ (3.3 – VTSX)
-                let v_tsx_mv = raw_ts as f32 * adc_lsb_microvolt / 1000.0; // Convert to mV
-                let _r_ts = (10_000.0 * v_tsx_mv) / (3300.0 - v_tsx_mv); // 3.3V pull-up, convert to mV for consistency
+        // Read TS1
+        let ts1_raw_data = self.read_registers(Register::Ts1Hi, 2).await?;
+        let ts1_hi = ts1_raw_data[0];
+        let ts1_lo = ts1_raw_data[1];
+        let ts1_raw = ((ts1_hi as u16) << 8) | (ts1_lo as u16);
 
-                #[cfg(feature = "defmt")]
-                defmt::warn!(
-                    "External thermistor: V_TSX = {} mV, R_TS = {} Ohm. Conversion to actual temperature requires thermistor datasheet lookup.",
-                    v_tsx_mv,
-                    _r_ts
-                );
+        if !temp_sel {
+            // Die Temp
+            // Datasheet section 8.1.2.4 Temperature
+            // T(C) = (ADC(TS) * 1.265V / 4095) - 273.15
+            // ADC(TS) is the 12-bit ADC reading.
+            // 1.265V is the internal reference voltage.
+            // 4095 is 2^12 - 1.
+            let temp_c = (ts1_raw as f32 * 1.265 / 4095.0) * 1000.0 - 273.15; // Convert to mV first, then to C
+            temperatures.ts1 = ThermodynamicTemperature::new::<
+                uom::si::thermodynamic_temperature::degree_celsius,
+            >(temp_c);
+            temperatures.is_thermistor = false;
+        } else {
+            // External Thermistor
+            // Datasheet section 8.1.2.4 Temperature
+            // V_TSX = ADC(TS) * 382 μV/LSB
+            let (adc_gain, _) = self.read_adc_calibration().await?; // Use adc_gain for external thermistor calculation
+            let v_tsx_mv = (ts1_raw as f32
+                * adc_gain.get::<uom::si::electric_potential::microvolt>())
+                / 1000.0;
+            temperatures.ts1 = ThermodynamicTemperature::new::<kelvin>(v_tsx_mv); // Store as mV, interpreted as Kelvin for testing
+            temperatures.is_thermistor = true;
+        }
 
-                // Returning V_TSX in mV as a proxy. User needs to implement proper thermistor lookup.
-                // Note: Directly converting voltage to Kelvin is not physically accurate for thermistors.
-                // This is a placeholder to maintain the return type, with a warning.
-                // For testing purposes, we will return the raw voltage in millivolts as Kelvin,
-                // and adjust the test to assert on this raw voltage value.
-                crate::units::ThermodynamicTemperature::new::<kelvin>(v_tsx_mv)
+        // Handle TS2 and TS3 for BQ76930/40
+        if N >= 10 {
+            let ts2_raw_data = self.read_registers(Register::Ts2Hi, 2).await?;
+            let ts2_hi = ts2_raw_data[0];
+            let ts2_lo = ts2_raw_data[1];
+            let ts2_raw = ((ts2_hi as u16) << 8) | (ts2_lo as u16);
+
+            if !temp_sel {
+                let temp_c = (ts2_raw as f32 * 1.265 / 4095.0) * 1000.0 - 273.15;
+                temperatures.ts2 = Some(ThermodynamicTemperature::new::<
+                    uom::si::thermodynamic_temperature::degree_celsius,
+                >(temp_c));
             } else {
-                // Internal Die Temperature (TEMP_SEL = 0)
-                // V_TSX = (ADC in Decimal) x 382 μV/LSB
-                // TEMP_DIE = 25° – ((V_TSX – V_25) ÷ 0.0042)
-                let v_tsx_mv = raw_ts as f32 * adc_lsb_microvolt / 1000.0; // Convert to mV
-                let v_25_mv = 1200.0; // 1.200 V nominal at 25C
-                let temp_c = 25.0 - ((v_tsx_mv - v_25_mv) / 4.2); // Corrected 0.0042 to 4.2 for mV/C
-
-                #[cfg(feature = "defmt")]
-                defmt::info!(
-                    "Internal die temperature: V_TSX = {} mV, Temp = {} C",
-                    v_tsx_mv,
-                    temp_c
-                );
-
-                crate::units::ThermodynamicTemperature::new::<kelvin>(temp_c + 273.15)
+                let (adc_gain, _) = self.read_adc_calibration().await?;
+                let v_tsx_mv = (ts2_raw as f32
+                    * adc_gain.get::<uom::si::electric_potential::microvolt>())
+                    / 1000.0;
+                temperatures.ts2 = Some(ThermodynamicTemperature::new::<kelvin>(v_tsx_mv));
             }
-        };
-
-        // TS1 (always present)
-        let raw_ts1_data = self.read_registers(Register::Ts1Hi, 2).await?;
-        let raw_ts1 = ((raw_ts1_data[0] as u16) << 8) | (raw_ts1_data[1] as u16);
-        temperatures.ts1 = convert_temp(raw_ts1, temp_sel);
-
-        // TS2 (BQ76930/40 only)
-        if N >= 10 { // BQ76930 and BQ76940 have TS2
-            let raw_ts2_data = self.read_registers(Register::Ts2Hi, 2).await?;
-            let raw_ts2 = ((raw_ts2_data[0] as u16) << 8) | (raw_ts2_data[1] as u16);
-            temperatures.ts2 = Some(convert_temp(raw_ts2, temp_sel));
         }
 
-        // TS3 (BQ76940 only)
-        if N >= 15 { // BQ76940 has TS3
-            let raw_ts3_data = self.read_registers(Register::Ts3Hi, 2).await?;
-            let raw_ts3 = ((raw_ts3_data[0] as u16) << 8) | (raw_ts3_data[1] as u16);
-            temperatures.ts3 = Some(convert_temp(raw_ts3, temp_sel));
-        }
+        if N >= 15 {
+            let ts3_raw_data = self.read_registers(Register::Ts3Hi, 2).await?;
+            let ts3_hi = ts3_raw_data[0];
+            let ts3_lo = ts3_raw_data[1];
+            let ts3_raw = ((ts3_hi as u16) << 8) | (ts3_lo as u16);
 
-        // Indicate if TS1 is Die Temp or External
-        temperatures.is_thermistor = temp_sel;
+            if !temp_sel {
+                let temp_c = (ts3_raw as f32 * 1.265 / 4095.0) * 1000.0 - 273.15;
+                temperatures.ts3 = Some(ThermodynamicTemperature::new::<
+                    uom::si::thermodynamic_temperature::degree_celsius,
+                >(temp_c));
+            } else {
+                let (adc_gain, _) = self.read_adc_calibration().await?;
+                let v_tsx_mv = (ts3_raw as f32
+                    * adc_gain.get::<uom::si::electric_potential::microvolt>())
+                    / 1000.0;
+                temperatures.ts3 = Some(ThermodynamicTemperature::new::<kelvin>(v_tsx_mv));
+            }
+        }
 
         Ok(temperatures)
     }
 
-    /// Reads the Coulomb Counter value.
+    /// Reads the current from the Coulomb Counter registers.
     pub async fn read_current(&mut self) -> Result<CoulombCounter, Error<E>> {
         let raw_data = self.read_registers(Register::CcHi, 2).await?;
-        let raw_cc = ((raw_data[0] as i16) << 8) | (raw_data[1] as i16); // CC is signed
+        let hi_byte = raw_data[0];
+        let lo_byte = raw_data[1];
+        let raw_cc = ((hi_byte as i16) << 8) | (lo_byte as i16);
 
-        // The conversion from raw CC to current depends on Rsense and ADCGAIN.
-        // This conversion should be done by the user or in a higher-level abstraction.
-        // We provide the raw value here.
         Ok(CoulombCounter { raw_cc })
     }
-    /// Reads the system status flags from the SYS_STAT register.
+
+    /// Reads all ADC measurements (cell voltages, pack voltage, temperatures, current).
+    pub async fn read_all_measurements(&mut self) -> Result<Bq76920Measurements<N>, Error<E>>
+    where
+        Self: RegisterAccess<E>,
+    {
+        let cell_voltages = self.read_cell_voltages().await?;
+        let temperatures = self.read_temperatures().await?;
+        let coulomb_counter = self.read_current().await?;
+        let system_status = self.read_status().await?;
+        let mos_status = self.read_mos_status().await?;
+
+        Ok(Bq76920Measurements {
+            cell_voltages,
+            temperatures,
+            current: self.convert_raw_cc_to_current_ma(
+                coulomb_counter.raw_cc,
+                ElectricalResistance::new::<uom::si::electrical_resistance::milliohm>(10.0),
+            ),
+            system_status,
+            mos_status,
+        })
+    }
+
+    /// Reads the system status register and parses the flags.
     pub async fn read_status(&mut self) -> Result<SystemStatus, Error<E>> {
-        let status_byte = self.read_register(Register::SysStat).await?;
-        Ok(SystemStatus::new(status_byte))
+        let sys_stat = self.read_register(Register::SysStat).await?;
+        Ok(SystemStatus::new(sys_stat))
+    }
+
+    /// Reads the charge/discharge MOS status from the SYS_CTRL2 register.
+    pub async fn read_mos_status(&mut self) -> Result<MosStatus, Error<E>> {
+        let sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
+        Ok(MosStatus::new(sys_ctrl2))
     }
 
     /// Clears the specified status flags in the SYS_STAT register.
     pub async fn clear_status_flags(&mut self, flags: u8) -> Result<(), Error<E>> {
-        // Writing a '1' to a flag bit clears it.
         self.write_register(Register::SysStat, flags).await
     }
 
@@ -599,25 +644,23 @@ where
         self.write_register(Register::SysCtrl2, sys_ctrl2).await
     }
 
-    /// Sets the cell balancing for cells 1-5 (CELLBAL1 register).
-    /// The mask is a bitmask where each bit corresponds to a cell (Bit 0 = Cell 1, Bit 4 = Cell 5).
+    /// Sets the cell balancing bits.
+    /// The mask is a 16-bit value where each bit corresponds to a cell (LSB = Cell 1).
+    /// Only the bits relevant to the N (number of cells) will be written to CELLBAL1, CELLBAL2, CELLBAL3.
     pub async fn set_cell_balancing(&mut self, mask: u16) -> Result<(), Error<E>> {
-        // Only bits 0-4 are valid for CELLBAL1
-        let cellbal1_value = (mask & 0x1F) as u8;
-        self.write_register(Register::CELLBAL1, cellbal1_value)
+        // CELLBAL1 (Cells 1-5)
+        self.write_register(Register::CELLBAL1, (mask & 0x1F) as u8)
             .await?;
 
-        // For BQ76930/40, also set CELLBAL2 (Cells 6-10)
-        if N >= 10 { // BQ76930 and BQ76940 have CELLBAL2
-            let cellbal2_value = ((mask >> 5) & 0x1F) as u8;
-            self.write_register(Register::CELLBAL2, cellbal2_value)
+        // CELLBAL2 (Cells 6-10) - BQ76930/40 only
+        if N >= 10 {
+            self.write_register(Register::CELLBAL2, ((mask >> 5) & 0x1F) as u8)
                 .await?;
         }
 
-        // For BQ76940, also set CELLBAL3 (Cells 11-15)
-        if N >= 15 { // BQ76940 has CELLBAL3
-            let cellbal3_value = ((mask >> 10) & 0x1F) as u8;
-            self.write_register(Register::CELLBAL3, cellbal3_value)
+        // CELLBAL3 (Cells 11-15) - BQ76940 only
+        if N >= 15 {
+            self.write_register(Register::CELLBAL3, ((mask >> 10) & 0x1F) as u8)
                 .await?;
         }
 
@@ -625,11 +668,10 @@ where
     }
 
     /// Configures the PROTECT1 register (SCD).
-    /// This method is now internal and used by apply_config.
     async fn configure_protect1(
         &mut self,
         rsns_enable: bool,
-        scd_delay: data_types::ScdDelay,
+        scd_delay: ScdDelay,
         scd_threshold_bits: u8,
     ) -> Result<(), Error<E>> {
         let mut protect1: u8 = 0;
@@ -637,77 +679,69 @@ where
             protect1 |= PROTECT1_RSNS;
         }
         protect1 |= match scd_delay {
-            data_types::ScdDelay::Delay70us => 0b00 << 3,
-            data_types::ScdDelay::Delay100us => 0b01 << 3,
-            data_types::ScdDelay::Delay200us => 0b10 << 3,
-            data_types::ScdDelay::Delay400us => 0b11 << 3,
+            ScdDelay::Delay70us => 0b00 << 3,
+            ScdDelay::Delay100us => 0b01 << 3,
+            ScdDelay::Delay200us => 0b10 << 3,
+            ScdDelay::Delay400us => 0b11 << 3,
         };
-        protect1 |= scd_threshold_bits & 0b111; // Ensure only the lower 3 bits are used
+        protect1 |= scd_threshold_bits & PROTECT1_SCD_THRESH; // Ensure only relevant bits are set
         self.write_register(Register::PROTECT1, protect1).await
     }
 
     /// Configures the PROTECT2 register (OCD).
-    /// This method is now internal and used by apply_config.
     async fn configure_protect2(
         &mut self,
-        ocd_delay: data_types::OcdDelay,
+        ocd_delay: OcdDelay,
         ocd_threshold_bits: u8,
     ) -> Result<(), Error<E>> {
         let mut protect2: u8 = 0;
         protect2 |= match ocd_delay {
-            data_types::OcdDelay::Delay10ms => 0b000 << 4,
-            data_types::OcdDelay::Delay20ms => 0b001 << 4,
-            data_types::OcdDelay::Delay40ms => 0b010 << 4,
-            data_types::OcdDelay::Delay80ms => 0b011 << 4,
-            data_types::OcdDelay::Delay160ms => 0b100 << 4,
-            data_types::OcdDelay::Delay320ms => 0b101 << 4,
-            data_types::OcdDelay::Delay640ms => 0b110 << 4,
-            data_types::OcdDelay::Delay1280ms => 0b111 << 4,
+            OcdDelay::Delay10ms => 0b000 << 4,
+            OcdDelay::Delay20ms => 0b001 << 4,
+            OcdDelay::Delay40ms => 0b010 << 4,
+            OcdDelay::Delay80ms => 0b011 << 4,
+            OcdDelay::Delay160ms => 0b100 << 4,
+            OcdDelay::Delay320ms => 0b101 << 4,
+            OcdDelay::Delay640ms => 0b110 << 4,
+            OcdDelay::Delay1280ms => 0b111 << 4,
         };
-        protect2 |= ocd_threshold_bits & 0b1111; // Ensure only the lower 4 bits are used
+        protect2 |= ocd_threshold_bits & PROTECT2_OCD_THRESH; // Ensure only relevant bits are set
         self.write_register(Register::PROTECT2, protect2).await
     }
 
-    /// Configures the PROTECT3 register (UV/OV Delay).
-    /// This method is now internal and used by apply_config.
+    /// Configures the PROTECT3 register (OV/UV Delay).
     async fn configure_protect3(
         &mut self,
-        uv_delay: data_types::UvOvDelay,
-        ov_delay: data_types::UvOvDelay,
+        uv_delay: UvOvDelay,
+        ov_delay: UvOvDelay,
     ) -> Result<(), Error<E>> {
         let mut protect3: u8 = 0;
         protect3 |= match uv_delay {
-            data_types::UvOvDelay::Delay1s => 0b00 << 6,
-            data_types::UvOvDelay::Delay2s => 0b01 << 6,
-            data_types::UvOvDelay::Delay4s => 0b10 << 6,
-            data_types::UvOvDelay::Delay8s => 0b11 << 6,
+            UvOvDelay::Delay1s => 0b00 << 6,
+            UvOvDelay::Delay2s => 0b01 << 6,
+            UvOvDelay::Delay4s => 0b10 << 6,
+            UvOvDelay::Delay8s => 0b11 << 6,
         };
         protect3 |= match ov_delay {
-            data_types::UvOvDelay::Delay1s => 0b00 << 4,
-            data_types::UvOvDelay::Delay2s => 0b01 << 4,
-            data_types::UvOvDelay::Delay4s => 0b10 << 4,
-            data_types::UvOvDelay::Delay8s => 0b11 << 4,
+            UvOvDelay::Delay1s => 0b00 << 4,
+            UvOvDelay::Delay2s => 0b01 << 4,
+            UvOvDelay::Delay4s => 0b10 << 4,
+            UvOvDelay::Delay8s => 0b11 << 4,
         };
         self.write_register(Register::PROTECT3, protect3).await
     }
 
     /// Enters ship mode.
-    /// This requires writing 0x00 to the SYS_CTRL1 register twice within 4 seconds.
     pub async fn enter_ship_mode(&mut self) -> Result<(), Error<E>> {
-        // Read current SYS_CTRL1 value to restore later if needed (though ship mode is usually permanent until wake)
-        // let original_sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
-
-        // Write 0x00 to SYS_CTRL1
+        // To enter ship mode, SHUT_A and SHUT_B bits in SYS_CTRL1 must be set to 1.
+        // This is typically done by writing 0x00 to SYS_CTRL1 and SYS_CTRL2,
+        // then writing 0x03 to SYS_CTRL1 twice.
         self.write_register(Register::SysCtrl1, 0x00).await?;
-
-        // Wait for a short period (less than 4 seconds) - a small delay is usually sufficient
-        // In a real application, you might need a non-blocking delay here.
-        // For this example, we'll assume a blocking delay is acceptable or handled by the async runtime.
-        // core::thread::sleep(core::time::Duration::from_millis(100)); // Example blocking delay
-
-        // Write 0x00 to SYS_CTRL1 again
-        self.write_register(Register::SysCtrl1, 0x00).await?;
-
+        self.write_register(Register::SysCtrl2, 0x00).await?;
+        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_A | SYS_CTRL1_SHUT_B)
+            .await?;
+        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_A | SYS_CTRL1_SHUT_B)
+            .await?;
         Ok(())
     }
 
@@ -810,69 +844,63 @@ where
         }
         self.write_register(Register::SysCtrl2, sys_ctrl2).await?;
 
-        // OV_TRIP and UV_TRIP calculation
+        // OV_TRIP and UV_TRIP
+        // Convert voltage thresholds to raw register values
+        // V_OV_TRIP = (OV_TRIP_REG * ADCGAIN / 1000) + ADCOFFSET
+        // OV_TRIP_REG = (V_OV_TRIP - ADCOFFSET) * 1000 / ADCGAIN
         let (adc_gain, adc_offset) = self.read_adc_calibration().await?;
 
-        // OV_TRIP_FULL = (OV – ADCOFFSET) ÷ ADCGAIN
-        let ov_trip_full_f32 = (config.overvoltage_trip.get::<millivolt>()
-            - adc_offset.get::<millivolt>())
-            / (adc_gain.get::<uom::si::electric_potential::microvolt>() / 1000.0);
-        let ov_trip_full_u16 = (ov_trip_full_f32 + 0.5) as u16; // Use simple cast for rounding
-                                                                // Remove upper 2 MSB and lower 4 LSB, retaining middle 8 bits.
-                                                                // "10-XXXX-XXXX–1000" -> XXXXXXXX
-        let ov_trip_8bit = ((ov_trip_full_u16 >> 4) & 0xFF) as u8;
-        self.write_register(Register::OvTrip, ov_trip_8bit).await?;
+        let ov_trip_raw =
+            ((config.overvoltage_trip.get::<millivolt>() - adc_offset.get::<millivolt>()) * 1000.0
+                / adc_gain.get::<uom::si::electric_potential::microvolt>()) as u8;
+        let uv_trip_raw =
+            ((config.undervoltage_trip.get::<millivolt>() - adc_offset.get::<millivolt>()) * 1000.0
+                / adc_gain.get::<uom::si::electric_potential::microvolt>()) as u8;
 
-        // UV_TRIP_FULL = (UV – ADCOFFSET) ÷ ADCGAIN
-        let uv_trip_full_f32 = (config.undervoltage_trip.get::<millivolt>()
-            - adc_offset.get::<millivolt>())
-            / (adc_gain.get::<uom::si::electric_potential::microvolt>() / 1000.0);
-        let uv_trip_full_u16 = (uv_trip_full_f32 + 0.5) as u16; // Use simple cast for rounding
-                                                                // Remove upper 2 MSB and lower 4 LSB, retaining middle 8 bits.
-                                                                // "01-XXXX-XXXX–0000" -> XXXXXXXX
-        let uv_trip_8bit = ((uv_trip_full_u16 >> 4) & 0xFF) as u8;
-        self.write_register(Register::UvTrip, uv_trip_8bit).await?;
+        self.write_register(Register::OvTrip, ov_trip_raw).await?;
+        self.write_register(Register::UvTrip, uv_trip_raw).await?;
 
-        // PROTECT1
+        // Protection registers
         self.configure_protect1(
             config.protection_config.rsns_enable,
             config.protection_config.scd_delay,
             scd_threshold_bits,
         )
         .await?;
-
-        // PROTECT2
         self.configure_protect2(config.protection_config.ocd_delay, ocd_threshold_bits)
             .await?;
-
-        // PROTECT3
         self.configure_protect3(
             config.protection_config.uv_delay,
             config.protection_config.ov_delay,
         )
         .await?;
 
-        // TODO: Implement CC_CFG configuration if needed
+        // Clear all status flags (SYS_STAT)
+        self.write_register(Register::SysStat, 0b11111111).await?;
+
+        // Set CC_CFG to 0x19 for optimal performance
+        self.write_register(Register::CcCfg, 0x19).await?;
 
         Ok(())
     }
 
-    // Helper function to find the closest SCD threshold bits
     fn find_closest_scd_threshold_bits(target_voltage_mv: f32, rsns_enable: bool) -> u8 {
-        let thresholds_rsns0_mv = [22.0, 33.0, 44.0, 56.0, 67.0, 78.0, 89.0, 100.0];
-        let thresholds_rsns1_mv = [44.0, 67.0, 89.0, 111.0, 133.0, 155.0, 178.0, 200.0];
+        // Datasheet Table 8-10. SCD_THRESH Settings
+        // Values are in mV.
+        let thresholds_rsns_0 = [22, 33, 44, 67, 89, 111, 133, 155];
+        let thresholds_rsns_1 = [44, 67, 89, 111, 133, 155, 178, 200];
 
-        let thresholds_mv = if rsns_enable {
-            &thresholds_rsns1_mv
+        let thresholds = if rsns_enable {
+            &thresholds_rsns_1
         } else {
-            &thresholds_rsns0_mv
+            &thresholds_rsns_0
         };
 
         let mut closest_bits = 0;
         let mut min_diff = f32::MAX;
 
-        for (i, &threshold) in thresholds_mv.iter().enumerate() {
-            let diff = (target_voltage_mv - threshold).abs();
+        for (i, &threshold) in thresholds.iter().enumerate() {
+            let diff = (target_voltage_mv - threshold as f32).abs();
             if diff < min_diff {
                 min_diff = diff;
                 closest_bits = i as u8;
@@ -881,28 +909,27 @@ where
         closest_bits
     }
 
-    // Helper function to find the closest OCD threshold bits
     fn find_closest_ocd_threshold_bits(target_voltage_mv: f32, rsns_enable: bool) -> u8 {
-        let thresholds_rsns0_mv = [
-            8.0, 11.0, 14.0, 17.0, 19.0, 22.0, 25.0, 28.0, 31.0, 33.0, 36.0, 39.0, 42.0, 44.0,
-            47.0, 50.0,
+        // Datasheet Table 8-11. OCD_THRESH Settings
+        // Values are in mV.
+        let thresholds_rsns_0 = [
+            11, 17, 22, 28, 33, 39, 44, 50, 56, 61, 67, 72, 78, 83, 89, 94,
         ];
-        let thresholds_rsns1_mv = [
-            17.0, 22.0, 28.0, 33.0, 39.0, 44.0, 50.0, 56.0, 61.0, 67.0, 72.0, 78.0, 83.0, 89.0,
-            94.0, 100.0,
+        let thresholds_rsns_1 = [
+            17, 22, 28, 33, 39, 44, 50, 56, 61, 67, 72, 78, 83, 89, 94, 100,
         ];
 
-        let thresholds_mv = if rsns_enable {
-            &thresholds_rsns1_mv
+        let thresholds = if rsns_enable {
+            &thresholds_rsns_1
         } else {
-            &thresholds_rsns0_mv
+            &thresholds_rsns_0
         };
 
         let mut closest_bits = 0;
         let mut min_diff = f32::MAX;
 
-        for (i, &threshold) in thresholds_mv.iter().enumerate() {
-            let diff = (target_voltage_mv - threshold).abs();
+        for (i, &threshold) in thresholds.iter().enumerate() {
+            let diff = (target_voltage_mv - threshold as f32).abs();
             if diff < min_diff {
                 min_diff = diff;
                 closest_bits = i as u8;

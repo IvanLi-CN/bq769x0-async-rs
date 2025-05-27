@@ -18,7 +18,6 @@ ISQ!(
     )
 );
 
-
 #[cfg(test)]
 mod tests {
     use super::{ElectricCurrent, ElectricPotential, ElectricalResistance};

@@ -75,26 +75,26 @@ pub enum TempSensor {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct SystemStatus {
     pub cc_ready: bool,
-    pub ovr_temp: bool,
-    pub uv: bool,
-    pub ov: bool,
-    pub scd: bool,
-    pub ocd: bool,
-    pub cuv: bool, // Cell Undervoltage
-    pub cov: bool, // Cell Overvoltage
+    pub device_xready: bool, // Corresponds to SYS_STAT_DEVICE_XREADY (Bit 5)
+    pub ovrd_alert: bool,    // Corresponds to SYS_STAT_OVRD_ALERT (Bit 4)
+    pub uv: bool,            // Corresponds to SYS_STAT_UV (Bit 3)
+    pub ov: bool,            // Corresponds to SYS_STAT_OV (Bit 2)
+    pub scd: bool,           // Corresponds to SYS_STAT_SCD (Bit 1)
+    pub ocd: bool,           // Corresponds to SYS_STAT_OCD (Bit 0)
+    pub ovr_temp: bool,      // Corresponds to SYS_STAT_OVR_TEMP (Bit 6)
 }
 
 impl SystemStatus {
     pub fn new(status_byte: u8) -> Self {
         Self {
-            cc_ready: (status_byte & 0b1000_0000) != 0,
-            ovr_temp: (status_byte & 0b0100_0000) != 0,
-            uv: (status_byte & 0b0010_0000) != 0,
-            ov: (status_byte & 0b0001_0000) != 0,
-            scd: (status_byte & 0b0000_1000) != 0,
-            ocd: (status_byte & 0b0000_0100) != 0,
-            cuv: (status_byte & 0b0000_0010) != 0,
-            cov: (status_byte & 0b0000_0001) != 0,
+            cc_ready: (status_byte & 0b1000_0000) != 0,      // Bit 7
+            device_xready: (status_byte & 0b0010_0000) != 0, // Bit 5
+            ovrd_alert: (status_byte & 0b0001_0000) != 0,    // Bit 4
+            uv: (status_byte & 0b0000_1000) != 0,            // Bit 3
+            ov: (status_byte & 0b0000_0100) != 0,            // Bit 2
+            scd: (status_byte & 0b0000_0010) != 0,           // Bit 1
+            ocd: (status_byte & 0b0000_0001) != 0,           // Bit 0
+            ovr_temp: (status_byte & 0b0100_0000) != 0,      // Bit 6
         }
     }
 }

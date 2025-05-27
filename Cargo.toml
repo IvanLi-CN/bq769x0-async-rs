@@ -19,7 +19,7 @@ uom = { version = "0.37", default-features = false, features = ["si", "f32"] }
 [dev-dependencies]
 embedded-hal-mock = "0.11.1"
 approx = "0.5"
-tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+bq769x0-async-rs = { path = "." }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -38,8 +38,5 @@ overflow-checks = false
 [features]
 default = []
 async = ["dep:embedded-hal-async"]
-defmt = ["dep:defmt"] # Add defmt feature
+defmt = ["dep:defmt"]
 
-[dev-dependencies.bq769x0-async-rs]
-path = "."
-default-features = false
