@@ -23,7 +23,7 @@ pub mod units; // Make the units module public
 
 pub use data_types::{
     BatteryConfig, Bq76920Measurements, CellVoltages, CoulombCounter, MosStatus, OcdDelay,
-    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureSensorReadings, UvOvDelay,
+    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureSensorReadings, TemperatureData, UvOvDelay,
 };
 use errors::Error;
 
