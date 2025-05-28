@@ -6,7 +6,7 @@ mod tests {
         OcdDelay, ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureData,
         TemperatureSensorReadings, UvOvDelay,
     };
-    use bq769x0_async_rs::registers::Register;
+    use bq769x0_async_rs::registers::{Register, SysCtrl2Flags, SysStatFlags};
     use bq769x0_async_rs::units::{
         ElectricCurrent, ElectricPotential, ElectricalResistance, TemperatureInterval,
     };
@@ -117,7 +117,8 @@ mod tests {
 
     #[test]
     fn test_system_status_binrw() {
-        let original = SystemStatus::new(0b1010_1010); // Example status byte
+        let original =
+            SystemStatus(SysStatFlags::CC_READY | SysStatFlags::OVRD_ALERT | SysStatFlags::SCD); // Example status byte
 
         let mut buffer = Cursor::new(Vec::new());
         original.write_le(&mut buffer).unwrap();
@@ -191,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_mos_status_binrw() {
-        let original = MosStatus::new(0b0000_0011); // Charge and Discharge on
+        let original = MosStatus(SysCtrl2Flags::CHG_ON | SysCtrl2Flags::DSG_ON); // Charge and Discharge on
 
         let mut buffer = Cursor::new(Vec::new());
         original.write_le(&mut buffer).unwrap();

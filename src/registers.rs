@@ -1,5 +1,6 @@
 #[cfg(feature = "binrw")]
 use binrw::{BinRead, BinWrite};
+use bitflags::bitflags;
 
 #[derive(Clone, Copy, Debug, PartialEq)] // Added Debug and PartialEq for consistency and potential future use
 #[repr(u8)]
@@ -117,60 +118,137 @@ pub enum Register {
     ADCGAIN2 = 0x59,
 }
 
-// SYS_STAT register bit masks
-pub const SYS_STAT_CC_READY: u8 = 1 << 7;
-// Bit 6 is RSVD (Reserved)
-pub const SYS_STAT_DEVICE_XREADY: u8 = 1 << 5;
-pub const SYS_STAT_OVRD_ALERT: u8 = 1 << 4;
-pub const SYS_STAT_UV: u8 = 1 << 3;
-pub const SYS_STAT_OV: u8 = 1 << 2;
-pub const SYS_STAT_SCD: u8 = 1 << 1;
-pub const SYS_STAT_OCD: u8 = 1 << 0;
+bitflags! {
+    /// System Status Register Flags
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct SysStatFlags: u8 {
+        /// CC Ready Flag
+        const CC_READY = 1 << 7;
+        /// Device XREADY Flag
+        const DEVICE_XREADY = 1 << 5;
+        /// OVRD_ALERT Flag
+        const OVRD_ALERT = 1 << 4;
+        /// Undervoltage Flag
+        const UV = 1 << 3;
+        /// Overvoltage Flag
+        const OV = 1 << 2;
+        /// Short Circuit Detection Flag
+        const SCD = 1 << 1;
+        /// Overcurrent Detection Flag
+        const OCD = 1 << 0;
+    }
+}
 
-// SYS_CTRL1 register bit masks
-pub const SYS_CTRL1_LOAD_PRESENT: u8 = 1 << 7;
-pub const SYS_CTRL1_ADC_EN: u8 = 1 << 4;
-pub const SYS_CTRL1_TEMP_SEL: u8 = 1 << 3;
-pub const SYS_CTRL1_SHUT_A: u8 = 1 << 1;
-pub const SYS_CTRL1_SHUT_B: u8 = 1 << 0;
+bitflags! {
+    /// System Control 1 Register Flags
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct SysCtrl1Flags: u8 {
+        /// Load Present Flag
+        const LOAD_PRESENT = 1 << 7;
+        /// ADC Enable
+        const ADC_EN = 1 << 4;
+        /// Temperature Sensor Select
+        const TEMP_SEL = 1 << 3;
+        /// Shutdown A
+        const SHUT_A = 1 << 1;
+        /// Shutdown B
+        const SHUT_B = 1 << 0;
+    }
+}
 
-// SYS_CTRL2 register bit masks
-pub const SYS_CTRL2_DELAY_DIS: u8 = 1 << 7;
-pub const SYS_CTRL2_CC_EN: u8 = 1 << 6;
-pub const SYS_CTRL2_CC_ONESHOT: u8 = 1 << 5;
-pub const SYS_CTRL2_DSG_ON: u8 = 1 << 1;
-pub const SYS_CTRL2_CHG_ON: u8 = 1 << 0;
+bitflags! {
+    /// System Control 2 Register Flags
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct SysCtrl2Flags: u8 {
+        /// Delay Disable
+        const DELAY_DIS = 1 << 7;
+        /// Coulomb Counter Enable
+        const CC_EN = 1 << 6;
+        /// Coulomb Counter One-Shot
+        const CC_ONESHOT = 1 << 5;
+        /// Discharge FET On
+        const DSG_ON = 1 << 1;
+        /// Charge FET On
+        const CHG_ON = 1 << 0;
+    }
+}
 
-// PROTECT1 register bit masks (SCD)
-pub const PROTECT1_RSNS: u8 = 1 << 7; // RSNS bit
-pub const PROTECT1_SCD_DELAY: u8 = 0b11 << 3; // SCD_D1:0 bits
-pub const PROTECT1_SCD_THRESH: u8 = 0b111; // SCD_T2:0 bits
+bitflags! {
+    /// Protection 1 Register Flags (SCD)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct Protect1Flags: u8 {
+        /// RSNS bit
+        const RSNS = 1 << 7;
+        /// SCD_D1:0 bits (Short Circuit Delay)
+        const SCD_DELAY_MASK = 0b11 << 3;
+        /// SCD_T2:0 bits (Short Circuit Threshold)
+        const SCD_THRESH_MASK = 0b111;
+    }
+}
 
-// PROTECT2 register bit masks (OCD)
-pub const PROTECT2_OCD_DELAY: u8 = 0b111 << 4; // OCD_D2:0 bits
-pub const PROTECT2_OCD_THRESH: u8 = 0b1111; // OCD_T3:0 bits
+bitflags! {
+    /// Protection 2 Register Flags (OCD)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct Protect2Flags: u8 {
+        /// OCD_D2:0 bits (Overcurrent Delay)
+        const OCD_DELAY_MASK = 0b111 << 4;
+        /// OCD_T3:0 bits (Overcurrent Threshold)
+        const OCD_THRESH_MASK = 0b1111;
+    }
+}
 
-// PROTECT3 register bit masks (OV/UV Delay)
-pub const PROTECT3_UV_DELAY: u8 = 0b11 << 6; // UV_D1:0 bits
-pub const PROTECT3_OV_DELAY: u8 = 0b11 << 4; // OV_D1:0 bits
+bitflags! {
+    /// Protection 3 Register Flags (OV/UV Delay)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct Protect3Flags: u8 {
+        /// UV_D1:0 bits (Undervoltage Delay)
+        const UV_DELAY_MASK = 0b11 << 6;
+        /// OV_D1:0 bits (Overvoltage Delay)
+        const OV_DELAY_MASK = 0b11 << 4;
+    }
+}
 
-// CELLBAL1 register bit masks (Cells 1-5)
-pub const CELLBAL1_BAL1: u8 = 1 << 0;
-pub const CELLBAL1_BAL2: u8 = 1 << 1;
-pub const CELLBAL1_BAL3: u8 = 1 << 2;
-pub const CELLBAL1_BAL4: u8 = 1 << 3;
-pub const CELLBAL1_BAL5: u8 = 1 << 4;
+bitflags! {
+    /// Cell Balance 1 Register Flags (Cells 1-5)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct CellBal1Flags: u8 {
+        const BAL1 = 1 << 0;
+        const BAL2 = 1 << 1;
+        const BAL3 = 1 << 2;
+        const BAL4 = 1 << 3;
+        const BAL5 = 1 << 4;
+    }
+}
 
-// CELLBAL2 register bit masks (Cells 6-10) - BQ76930/40 only
-pub const CELLBAL2_BAL6: u8 = 1 << 0;
-pub const CELLBAL2_BAL7: u8 = 1 << 1;
-pub const CELLBAL2_BAL8: u8 = 1 << 2;
-pub const CELLBAL2_BAL9: u8 = 1 << 3;
-pub const CELLBAL2_BAL10: u8 = 1 << 4;
+bitflags! {
+    /// Cell Balance 2 Register Flags (Cells 6-10)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct CellBal2Flags: u8 {
+        const BAL6 = 1 << 0;
+        const BAL7 = 1 << 1;
+        const BAL8 = 1 << 2;
+        const BAL9 = 1 << 3;
+        const BAL10 = 1 << 4;
+    }
+}
 
-// CELLBAL3 register bit masks (Cells 11-15) - BQ76940 only
-pub const CELLBAL3_BAL11: u8 = 1 << 0;
-pub const CELLBAL3_BAL12: u8 = 1 << 1;
-pub const CELLBAL3_BAL13: u8 = 1 << 2;
-pub const CELLBAL3_BAL14: u8 = 1 << 3;
-pub const CELLBAL3_BAL15: u8 = 1 << 4;
+bitflags! {
+    /// Cell Balance 3 Register Flags (Cells 11-15)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    pub struct CellBal3Flags: u8 {
+        const BAL11 = 1 << 0;
+        const BAL12 = 1 << 1;
+        const BAL13 = 1 << 2;
+        const BAL14 = 1 << 3;
+        const BAL15 = 1 << 4;
+    }
+}

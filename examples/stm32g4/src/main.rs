@@ -16,8 +16,7 @@ use {defmt_rtt as _, panic_probe as _};
 use bq769x0_async_rs::{
     BatteryConfig, Bq769x0, RegisterAccess,
     registers::{
-        Register, SYS_CTRL2_CC_EN, SYS_STAT_CC_READY, SYS_STAT_OCD, SYS_STAT_OV,
-        SYS_STAT_OVRD_ALERT, SYS_STAT_SCD, SYS_STAT_UV,
+        Register, SysCtrl2Flags, SysStatFlags,
     },
     units::ElectricalResistance,
 };
@@ -86,7 +85,7 @@ async fn main(_spawner: Spawner) {
         info!("Ensuring CC_EN is enabled in SYS_CTRL2...");
         let sys_ctrl2_val = bq.read_register(Register::SysCtrl2).await.unwrap_or(0);
         if let Err(e) = bq
-            .write_register(Register::SysCtrl2, sys_ctrl2_val | SYS_CTRL2_CC_EN)
+            .write_register(Register::SysCtrl2, (SysCtrl2Flags::from_bits_truncate(sys_ctrl2_val) | SysCtrl2Flags::CC_EN).bits())
             .await
         {
             error!("Failed to enable CC_EN: {:?}", e);
@@ -179,31 +178,24 @@ async fn main(_spawner: Spawner) {
         match bq.read_status().await {
             Ok(status) => {
                 info!("System Status:");
-                info!("  CC Ready: {}", status.cc_ready);
-                info!("  Overtemperature: {}", status.ovr_temp);
-                info!("  Undervoltage (UV): {}", status.uv);
-                info!("  Overvoltage (OV): {}", status.ov);
-                info!("  Short Circuit Discharge (SCD): {}", status.scd);
-                info!("  Overcurrent Discharge (OCD): {}", status.ocd);
-                info!("  Cell Undervoltage (UV): {}", status.uv);
-                info!("  Cell Overvoltage (OV): {}", status.ov);
+                info!("  CC Ready: {}", status.0.contains(SysStatFlags::CC_READY));
+                info!("  Overtemperature: {}", status.0.contains(SysStatFlags::OVRD_ALERT));
+                info!("  Undervoltage (UV): {}", status.0.contains(SysStatFlags::UV));
+                info!("  Overvoltage (OV): {}", status.0.contains(SysStatFlags::OV));
+                info!("  Short Circuit Discharge (SCD): {}", status.0.contains(SysStatFlags::SCD));
+                info!("  Overcurrent Discharge (OCD): {}", status.0.contains(SysStatFlags::OCD));
+                info!("  Cell Undervoltage (UV): {}", status.0.contains(SysStatFlags::UV));
+                info!("  Cell Overvoltage (OV): {}", status.0.contains(SysStatFlags::OV));
 
                 // Clear status flags after reading
                 // Only clear flags that are set
-                let flags_to_clear = (status.cc_ready as u8 * SYS_STAT_CC_READY)
-                    | (status.ovr_temp as u8 * SYS_STAT_OVRD_ALERT)
-                    | (status.uv as u8 * SYS_STAT_UV)
-                    | (status.ov as u8 * SYS_STAT_OV)
-                    | (status.scd as u8 * SYS_STAT_SCD)
-                    | (status.ocd as u8 * SYS_STAT_OCD)
-                    | (status.uv as u8 * SYS_STAT_UV)
-                    | (status.ov as u8 * SYS_STAT_OV);
+                let flags_to_clear = status.0;
 
-                if flags_to_clear != 0 {
-                    if let Err(e) = bq.clear_status_flags(flags_to_clear).await {
+                if !flags_to_clear.is_empty() {
+                    if let Err(e) = bq.clear_status_flags(flags_to_clear.bits()).await {
                         error!("Failed to clear status flags: {:?}", e);
                     } else {
-                        info!("Cleared status flags: {:#010b}", flags_to_clear);
+                        info!("Cleared status flags: {:#010b}", flags_to_clear.bits());
                     }
                 }
             }

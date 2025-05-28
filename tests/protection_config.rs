@@ -10,7 +10,7 @@ use bq769x0_async_rs::{
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
-    registers::*,
+    registers::{self, *},
     Bq769x0, RegisterAccess,
 };
 use common::{create_bq769x0_driver_disabled_crc, BQ76920_ADDR};
@@ -57,16 +57,9 @@ fn create_driver_with_adc_calibration(
 #[test]
 fn test_set_config_basic() {
     let config = BatteryConfig {
-        load_present: false,
-        adc_enable: true,
+        sys_ctrl1_flags: registers::SysCtrl1Flags::ADC_EN,
+        sys_ctrl2_flags: registers::SysCtrl2Flags::CC_EN,
         temp_sensor_selection: TempSensor::Internal,
-        shutdown_a: false,
-        shutdown_b: false,
-        delay_disable: false,
-        cc_enable: true,
-        cc_oneshot: false,
-        discharge_on: false,
-        charge_on: false,
         overvoltage_trip: ElectricPotential::new::<millivolt>(4200.0),
         undervoltage_trip: ElectricPotential::new::<millivolt>(2800.0),
         protection_config: ProtectionConfig {
@@ -85,12 +78,18 @@ fn test_set_config_basic() {
         // SYS_CTRL1 write
         I2cTransaction::write(
             BQ76920_ADDR,
-            vec![Register::SysCtrl1 as u8, SYS_CTRL1_ADC_EN],
+            vec![
+                Register::SysCtrl1 as u8,
+                registers::SysCtrl1Flags::ADC_EN.bits(),
+            ],
         ),
         // SYS_CTRL2 write
         I2cTransaction::write(
             BQ76920_ADDR,
-            vec![Register::SysCtrl2 as u8, SYS_CTRL2_CC_EN],
+            vec![
+                Register::SysCtrl2 as u8,
+                registers::SysCtrl2Flags::CC_EN.bits(),
+            ],
         ),
         // ADC calibration reads for OV/UV trip calculation
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN1 as u8], vec![0x00]), // ADCGAIN1 (raw 0)
@@ -107,7 +106,10 @@ fn test_set_config_basic() {
             BQ76920_ADDR,
             vec![
                 Register::PROTECT1 as u8,
-                PROTECT1_RSNS | (0b00 << 3) | 0b111,
+                (registers::Protect1Flags::RSNS
+                    | registers::Protect1Flags::from_bits_truncate(0b00 << 3)
+                    | registers::Protect1Flags::from_bits_truncate(0b111))
+                .bits(),
             ],
         ), // SCD_DELAY_70US (0b00), SCD_THRESH (0b111 for 200mV)
         // PROTECT2 write (OCD_DELAY=10ms, OCD_THRESH=closest to 20A*10mOhm=200mV)

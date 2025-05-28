@@ -1,3 +1,4 @@
+use crate::registers::{SysCtrl1Flags, SysCtrl2Flags, SysStatFlags};
 use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance, TemperatureInterval};
 use uom::si::electric_potential::volt;
 use uom::si::temperature_interval::degree_celsius;
@@ -152,82 +153,23 @@ pub enum TempSensor {
 
 /// Represents the system status flags.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct SystemStatus {
-    pub cc_ready: bool,
-    pub device_xready: bool, // Corresponds to SYS_STAT_DEVICE_XREADY (Bit 5)
-    pub ovrd_alert: bool,    // Corresponds to SYS_STAT_OVRD_ALERT (Bit 4)
-    pub uv: bool,            // Corresponds to SYS_STAT_UV (Bit 3)
-    pub ov: bool,            // Corresponds to SYS_STAT_OV (Bit 2)
-    pub scd: bool,           // Corresponds to SYS_STAT_SCD (Bit 1)
-    pub ocd: bool,           // Corresponds to SYS_STAT_OCD (Bit 0)
-    pub ovr_temp: bool,      // Corresponds to SYS_STAT_OVR_TEMP (Bit 6)
-}
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+pub struct SystemStatus(pub SysStatFlags);
 
 impl SystemStatus {
     pub fn new(status_byte: u8) -> Self {
-        Self {
-            cc_ready: (status_byte & 0b1000_0000) != 0,      // Bit 7
-            device_xready: (status_byte & 0b0010_0000) != 0, // Bit 5
-            ovrd_alert: (status_byte & 0b0001_0000) != 0,    // Bit 4
-            uv: (status_byte & 0b0000_1000) != 0,            // Bit 3
-            ov: (status_byte & 0b0000_0100) != 0,            // Bit 2
-            scd: (status_byte & 0b0000_0010) != 0,           // Bit 1
-            ocd: (status_byte & 0b0000_0001) != 0,           // Bit 0
-            ovr_temp: (status_byte & 0b0100_0000) != 0,      // Bit 6
-        }
+        SystemStatus(SysStatFlags::from_bits_truncate(status_byte))
     }
 }
 
-#[cfg(feature = "binrw")]
-impl BinRead for SystemStatus {
-    type Args<'a> = ();
+/// Represents the charge/discharge MOS status.
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+pub struct MosStatus(pub SysCtrl2Flags);
 
-    fn read_options<R: binrw::io::Read + binrw::io::Seek>(
-        reader: &mut R,
-        endian: binrw::Endian,
-        _args: Self::Args<'_>,
-    ) -> binrw::BinResult<Self> {
-        let status_byte = u8::read_options(reader, endian, ())?;
-        Ok(SystemStatus::new(status_byte))
-    }
-}
-
-#[cfg(feature = "binrw")]
-impl BinWrite for SystemStatus {
-    type Args<'a> = ();
-
-    fn write_options<W: binrw::io::Write + binrw::io::Seek>(
-        &self,
-        writer: &mut W,
-        endian: binrw::Endian,
-        _args: Self::Args<'_>,
-    ) -> binrw::BinResult<()> {
-        let mut status_byte = 0u8;
-        if self.cc_ready {
-            status_byte |= 0b1000_0000;
-        }
-        if self.device_xready {
-            status_byte |= 0b0010_0000;
-        }
-        if self.ovrd_alert {
-            status_byte |= 0b0001_0000;
-        }
-        if self.uv {
-            status_byte |= 0b0000_1000;
-        }
-        if self.ov {
-            status_byte |= 0b0000_0100;
-        }
-        if self.scd {
-            status_byte |= 0b0000_0010;
-        }
-        if self.ocd {
-            status_byte |= 0b0000_0001;
-        }
-        if self.ovr_temp {
-            status_byte |= 0b0100_0000;
-        }
-        status_byte.write_options(writer, endian, ())
+impl MosStatus {
+    pub fn new(sys_ctrl2_byte: u8) -> Self {
+        MosStatus(SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte))
     }
 }
 
@@ -286,37 +228,9 @@ pub struct ProtectionConfig {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct BatteryConfig {
-    // SYS_CTRL1 related
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub load_present: bool,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub adc_enable: bool,
+    pub sys_ctrl1_flags: SysCtrl1Flags,
+    pub sys_ctrl2_flags: SysCtrl2Flags,
     pub temp_sensor_selection: TempSensor,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub shutdown_a: bool,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub shutdown_b: bool,
-
-    // SYS_CTRL2 related
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub delay_disable: bool,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub cc_enable: bool,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub cc_oneshot: bool,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub discharge_on: bool,
-    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
-    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
-    pub charge_on: bool,
 
     // Voltage thresholds
     #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricPotential::new::<millivolt>(x)))]
@@ -340,16 +254,9 @@ pub struct BatteryConfig {
 impl Default for BatteryConfig {
     fn default() -> Self {
         Self {
-            load_present: false,
-            adc_enable: true,
+            sys_ctrl1_flags: SysCtrl1Flags::ADC_EN, // ADC_EN is true by default
+            sys_ctrl2_flags: SysCtrl2Flags::CC_EN,  // CC_EN is true by default
             temp_sensor_selection: TempSensor::Internal,
-            shutdown_a: false,
-            shutdown_b: false,
-            delay_disable: false,
-            cc_enable: true,
-            cc_oneshot: false,
-            discharge_on: false,
-            charge_on: false,
             overvoltage_trip: ElectricPotential::new::<millivolt>(4200.0),
             undervoltage_trip: ElectricPotential::new::<millivolt>(2800.0),
             protection_config: ProtectionConfig {
@@ -363,57 +270,6 @@ impl Default for BatteryConfig {
             },
             rsense: ElectricalResistance::new::<milliohm>(10.0), // Example default: 1mOhm (10 * 100uOhm)
         }
-    }
-}
-
-/// Represents the charge/discharge MOS status.
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct MosStatus {
-    pub charge_on: bool,
-    pub discharge_on: bool,
-}
-
-impl MosStatus {
-    pub fn new(sys_ctrl2_byte: u8) -> Self {
-        Self {
-            charge_on: (sys_ctrl2_byte & 0b0000_0001) != 0,
-            discharge_on: (sys_ctrl2_byte & 0b0000_0010) != 0,
-        }
-    }
-}
-
-#[cfg(feature = "binrw")]
-impl BinRead for MosStatus {
-    type Args<'a> = ();
-
-    fn read_options<R: binrw::io::Read + binrw::io::Seek>(
-        reader: &mut R,
-        endian: binrw::Endian,
-        _args: Self::Args<'_>,
-    ) -> binrw::BinResult<Self> {
-        let sys_ctrl2_byte = u8::read_options(reader, endian, ())?;
-        Ok(MosStatus::new(sys_ctrl2_byte))
-    }
-}
-
-#[cfg(feature = "binrw")]
-impl BinWrite for MosStatus {
-    type Args<'a> = ();
-
-    fn write_options<W: binrw::io::Write + binrw::io::Seek>(
-        &self,
-        writer: &mut W,
-        endian: binrw::Endian,
-        _args: Self::Args<'_>,
-    ) -> binrw::BinResult<()> {
-        let mut sys_ctrl2_byte = 0u8;
-        if self.charge_on {
-            sys_ctrl2_byte |= 0b0000_0001;
-        }
-        if self.discharge_on {
-            sys_ctrl2_byte |= 0b0000_0010;
-        }
-        sys_ctrl2_byte.write_options(writer, endian, ())
     }
 }
 

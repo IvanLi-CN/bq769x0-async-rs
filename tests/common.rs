@@ -5,7 +5,7 @@ use bq769x0_async_rs::{
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
-    registers::*,
+    registers::{self, *},
     Bq769x0, RegisterAccess,
 };
 use core::ops::Deref;
@@ -133,9 +133,12 @@ where
     // Set CC_CFG to 0x19 for optimal performance
     driver.write_register(Register::CcCfg, 0x19)?;
     // Enable ADC and set TEMP_SEL to external thermistor (example)
-    driver.write_register(Register::SysCtrl1, SYS_CTRL1_ADC_EN | SYS_CTRL1_TEMP_SEL)?;
+    driver.write_register(
+        Register::SysCtrl1,
+        (registers::SysCtrl1Flags::ADC_EN | registers::SysCtrl1Flags::TEMP_SEL).bits(),
+    )?;
     // Enable CC continuous readings (example)
-    driver.write_register(Register::SysCtrl2, SYS_CTRL2_CC_EN)?;
+    driver.write_register(Register::SysCtrl2, registers::SysCtrl2Flags::CC_EN.bits())?;
 
     Ok(())
 }

@@ -4,8 +4,8 @@ mod common;
 use approx::assert_relative_eq;
 use bq769x0_async_rs::units::ElectricPotential;
 use bq769x0_async_rs::{
-    data_types::{CoulombCounter, TemperatureSensorReadings}, // Removed SystemStatus
-    registers::{Register, SYS_CTRL1_TEMP_SEL, SYS_STAT_OV, SYS_STAT_UV},
+    data_types::{CoulombCounter, TemperatureSensorReadings},
+    registers::{Register, SysCtrl1Flags, SysCtrl2Flags, SysStatFlags},
     RegisterAccess,
 };
 use common::{create_bq769x0_driver_disabled_crc, BQ76920_ADDR};
@@ -101,7 +101,7 @@ fn test_read_temperatures_external_thermistor() {
         I2cTransaction::write_read(
             BQ76920_ADDR,
             vec![Register::SysCtrl1 as u8],
-            vec![SYS_CTRL1_TEMP_SEL],
+            vec![SysCtrl1Flags::TEMP_SEL.bits()],
         ), // TEMP_SEL = 1 (External Thermistor)
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::Ts1Hi as u8], vec![0x04, 0xB0]), // Raw 1200
         // ADC calibration reads for external thermistor calculation (not directly used for V_TSX, but for completeness)
@@ -150,13 +150,13 @@ fn test_read_status() {
     let result = driver.read_status();
     assert!(result.is_ok());
     let status = result.unwrap();
-    assert_eq!(status.cc_ready, false);
-    assert_eq!(status.device_xready, true);
-    assert_eq!(status.ovrd_alert, true); // Corrected assertion
-    assert_eq!(status.uv, false);
-    assert_eq!(status.ov, true);
-    assert_eq!(status.scd, false);
-    assert_eq!(status.ocd, true);
+    assert_eq!(status.0.contains(SysStatFlags::CC_READY), false);
+    assert_eq!(status.0.contains(SysStatFlags::DEVICE_XREADY), true);
+    assert_eq!(status.0.contains(SysStatFlags::OVRD_ALERT), true); // Corrected assertion
+    assert_eq!(status.0.contains(SysStatFlags::UV), false);
+    assert_eq!(status.0.contains(SysStatFlags::OV), true);
+    assert_eq!(status.0.contains(SysStatFlags::SCD), false);
+    assert_eq!(status.0.contains(SysStatFlags::OCD), true);
     i2c_mock.done();
 }
 
@@ -165,12 +165,15 @@ fn test_clear_status_flags() {
     let expectations = [
         I2cTransaction::write(
             BQ76920_ADDR,
-            vec![Register::SysStat as u8, SYS_STAT_UV | SYS_STAT_OV],
+            vec![
+                Register::SysStat as u8,
+                (SysStatFlags::UV | SysStatFlags::OV).bits(),
+            ],
         ), // Clear UV and OV flags
     ];
     let (mut driver, i2c_mock) =
         create_bq769x0_driver_disabled_crc::<5>(&expectations, BQ76920_ADDR);
-    let result = driver.clear_status_flags(SYS_STAT_UV | SYS_STAT_OV);
+    let result = driver.clear_status_flags(((SysStatFlags::UV | SysStatFlags::OV).bits()) as u8);
     assert_eq!(result, Ok(()));
     i2c_mock.done();
 }
@@ -242,9 +245,21 @@ fn test_read_all_measurements() {
         216.064,
         epsilon = 0.00001
     );
-    assert_eq!(measurements.system_status.device_xready, true);
-    assert_eq!(measurements.mos_status.charge_on, true);
-    assert_eq!(measurements.mos_status.discharge_on, true);
+    assert_eq!(
+        measurements
+            .system_status
+            .0
+            .contains(SysStatFlags::DEVICE_XREADY),
+        true
+    );
+    assert_eq!(
+        measurements.mos_status.0.contains(SysCtrl2Flags::CHG_ON),
+        true
+    );
+    assert_eq!(
+        measurements.mos_status.0.contains(SysCtrl2Flags::DSG_ON),
+        true
+    );
     i2c_mock.done();
 }
 

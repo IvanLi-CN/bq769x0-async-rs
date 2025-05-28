@@ -10,7 +10,7 @@ use bq769x0_async_rs::{
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
-    registers::*,
+    registers::{self, *},
     Bq769x0, RegisterAccess,
 };
 use common::{create_bq769x0_driver_disabled_crc, BQ76920_ADDR, BQ76930_ADDR, BQ76940_ADDR};
@@ -41,7 +41,7 @@ fn test_is_alert_overridden() {
         I2cTransaction::write_read(
             BQ76920_ADDR,
             vec![Register::SysStat as u8],
-            vec![SYS_STAT_OVRD_ALERT],
+            vec![registers::SysStatFlags::OVRD_ALERT.bits()],
         ), // OVRD_ALERT bit set
     ];
     let (mut driver, i2c_mock) =
@@ -66,7 +66,10 @@ fn test_enable_charging() {
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::SysCtrl2 as u8], vec![0x00]), // Read current SYS_CTRL2
         I2cTransaction::write(
             BQ76920_ADDR,
-            vec![Register::SysCtrl2 as u8, SYS_CTRL2_CHG_ON],
+            vec![
+                Register::SysCtrl2 as u8,
+                registers::SysCtrl2Flags::CHG_ON.bits(),
+            ],
         ), // Write SYS_CTRL2 with CHG_ON
     ];
     let (mut driver, i2c_mock) =
@@ -82,7 +85,7 @@ fn test_disable_charging() {
         I2cTransaction::write_read(
             BQ76920_ADDR,
             vec![Register::SysCtrl2 as u8],
-            vec![SYS_CTRL2_CHG_ON],
+            vec![registers::SysCtrl2Flags::CHG_ON.bits()],
         ), // Read current SYS_CTRL2 (CHG_ON is set)
         I2cTransaction::write(BQ76920_ADDR, vec![Register::SysCtrl2 as u8, 0x00]), // Write SYS_CTRL2 with CHG_ON cleared
     ];
@@ -99,7 +102,10 @@ fn test_enable_discharging() {
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::SysCtrl2 as u8], vec![0x00]), // Read current SYS_CTRL2
         I2cTransaction::write(
             BQ76920_ADDR,
-            vec![Register::SysCtrl2 as u8, SYS_CTRL2_DSG_ON],
+            vec![
+                Register::SysCtrl2 as u8,
+                registers::SysCtrl2Flags::DSG_ON.bits(),
+            ],
         ), // Write SYS_CTRL2 with DSG_ON
     ];
     let (mut driver, i2c_mock) =

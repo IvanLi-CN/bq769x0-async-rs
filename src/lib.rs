@@ -14,7 +14,7 @@ use embedded_hal::i2c::I2c;
 use embedded_hal_async::i2c::I2c;
 
 pub mod registers;
-use registers::*; // Import bit masks
+use registers::*; // Import all from registers
 
 pub mod crc; // Make crc module public
 pub mod data_types;
@@ -23,7 +23,8 @@ pub mod units; // Make the units module public
 
 pub use data_types::{
     BatteryConfig, Bq76920Measurements, CellVoltages, CoulombCounter, MosStatus, OcdDelay,
-    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureSensorReadings, TemperatureData, UvOvDelay,
+    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureData,
+    TemperatureSensorReadings, UvOvDelay,
 };
 use errors::Error;
 
@@ -490,8 +491,9 @@ where
         // TEMP_SEL = 1: TS1 is external thermistor
 
         // Read SYS_CTRL1 to check TEMP_SEL
-        let sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
-        let temp_sel = (sys_ctrl1 & SYS_CTRL1_TEMP_SEL) != 0;
+        let sys_ctrl1_byte = self.read_register(Register::SysCtrl1).await?;
+        let temp_sel =
+            SysCtrl1Flags::from_bits_truncate(sys_ctrl1_byte).contains(SysCtrl1Flags::TEMP_SEL);
 
         let mut temperatures = TemperatureSensorReadings::new();
 
@@ -620,23 +622,29 @@ where
 
     /// Enables charging by setting the CHG_ON bit in SYS_CTRL2.
     pub async fn enable_charging(&mut self) -> Result<(), Error<E>> {
-        let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
-        sys_ctrl2 |= SYS_CTRL2_CHG_ON;
-        self.write_register(Register::SysCtrl2, sys_ctrl2).await
+        let sys_ctrl2_byte = self.read_register(Register::SysCtrl2).await?;
+        let mut sys_ctrl2_flags = SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte);
+        sys_ctrl2_flags.insert(SysCtrl2Flags::CHG_ON);
+        self.write_register(Register::SysCtrl2, sys_ctrl2_flags.bits())
+            .await
     }
 
     /// Disables charging by clearing the CHG_ON bit in SYS_CTRL2.
     pub async fn disable_charging(&mut self) -> Result<(), Error<E>> {
-        let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
-        sys_ctrl2 &= !SYS_CTRL2_CHG_ON;
-        self.write_register(Register::SysCtrl2, sys_ctrl2).await
+        let sys_ctrl2_byte = self.read_register(Register::SysCtrl2).await?;
+        let mut sys_ctrl2_flags = SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte);
+        sys_ctrl2_flags.remove(SysCtrl2Flags::CHG_ON);
+        self.write_register(Register::SysCtrl2, sys_ctrl2_flags.bits())
+            .await
     }
 
     /// Enables discharging by setting the DSG_ON bit in SYS_CTRL2.
     pub async fn enable_discharging(&mut self) -> Result<(), Error<E>> {
-        let mut sys_ctrl2 = self.read_register(Register::SysCtrl2).await?;
-        sys_ctrl2 |= SYS_CTRL2_DSG_ON;
-        self.write_register(Register::SysCtrl2, sys_ctrl2).await
+        let sys_ctrl2_byte = self.read_register(Register::SysCtrl2).await?;
+        let mut sys_ctrl2_flags = SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte);
+        sys_ctrl2_flags.insert(SysCtrl2Flags::DSG_ON);
+        self.write_register(Register::SysCtrl2, sys_ctrl2_flags.bits())
+            .await
     }
 
     /// Sets the cell balancing bits.
@@ -670,17 +678,23 @@ where
         scd_threshold_bits: u8,
     ) -> Result<(), Error<E>> {
         let mut protect1: u8 = 0;
+        let mut protect1_flags = Protect1Flags::from_bits_truncate(protect1);
         if rsns_enable {
-            protect1 |= PROTECT1_RSNS;
+            protect1_flags.insert(Protect1Flags::RSNS);
         }
+        protect1 = protect1_flags.bits();
         protect1 |= match scd_delay {
             ScdDelay::Delay70us => 0b00 << 3,
             ScdDelay::Delay100us => 0b01 << 3,
             ScdDelay::Delay200us => 0b10 << 3,
             ScdDelay::Delay400us => 0b11 << 3,
         };
-        protect1 |= scd_threshold_bits & PROTECT1_SCD_THRESH; // Ensure only relevant bits are set
-        self.write_register(Register::PROTECT1, protect1).await
+        let mut protect1_flags = Protect1Flags::from_bits_truncate(protect1);
+        protect1_flags.insert(
+            Protect1Flags::from_bits_truncate(scd_threshold_bits) & Protect1Flags::SCD_THRESH_MASK,
+        ); // Ensure only relevant bits are set
+        self.write_register(Register::PROTECT1, protect1_flags.bits())
+            .await
     }
 
     /// Configures the PROTECT2 register (OCD).
@@ -700,8 +714,12 @@ where
             OcdDelay::Delay640ms => 0b110 << 4,
             OcdDelay::Delay1280ms => 0b111 << 4,
         };
-        protect2 |= ocd_threshold_bits & PROTECT2_OCD_THRESH; // Ensure only relevant bits are set
-        self.write_register(Register::PROTECT2, protect2).await
+        let mut protect2_flags = Protect2Flags::from_bits_truncate(protect2);
+        protect2_flags.insert(
+            Protect2Flags::from_bits_truncate(ocd_threshold_bits) & Protect2Flags::OCD_THRESH_MASK,
+        ); // Ensure only relevant bits are set
+        self.write_register(Register::PROTECT2, protect2_flags.bits())
+            .await
     }
 
     /// Configures the PROTECT3 register (OV/UV Delay).
@@ -733,17 +751,17 @@ where
         // then writing 0x03 to SYS_CTRL1 twice.
         self.write_register(Register::SysCtrl1, 0x00).await?;
         self.write_register(Register::SysCtrl2, 0x00).await?;
-        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_B) // Write #1: SHUT_B = 1
+        self.write_register(Register::SysCtrl1, SysCtrl1Flags::SHUT_B.bits()) // Write #1: SHUT_B = 1
             .await?;
-        self.write_register(Register::SysCtrl1, SYS_CTRL1_SHUT_A) // Write #2: SHUT_A = 1
+        self.write_register(Register::SysCtrl1, SysCtrl1Flags::SHUT_A.bits()) // Write #2: SHUT_A = 1
             .await?;
         Ok(())
     }
 
     /// Checks if the ALERT pin is overridden.
     pub async fn is_alert_overridden(&mut self) -> Result<bool, Error<E>> {
-        let sys_stat = self.read_register(Register::SysStat).await?;
-        Ok((sys_stat & SYS_STAT_OVRD_ALERT) != 0)
+        let sys_stat_byte = self.read_register(Register::SysStat).await?;
+        Ok(SysStatFlags::from_bits_truncate(sys_stat_byte).contains(SysStatFlags::OVRD_ALERT))
     }
 
     /// Converts a raw Coulomb Counter value to current in mA.
@@ -799,45 +817,14 @@ where
         // 3. Configure registers based on BatteryConfig and mapped thresholds
 
         // SYS_CTRL1
-        let mut sys_ctrl1: u8 = 0;
-        if config.load_present {
-            sys_ctrl1 |= SYS_CTRL1_LOAD_PRESENT;
-        }
-        if config.adc_enable {
-            sys_ctrl1 |= SYS_CTRL1_ADC_EN;
-        }
-        match config.temp_sensor_selection {
-            data_types::TempSensor::Internal => { /* TEMP_SEL = 0, default */ }
-            data_types::TempSensor::External => {
-                sys_ctrl1 |= SYS_CTRL1_TEMP_SEL;
-            }
-        }
-        if config.shutdown_a {
-            sys_ctrl1 |= SYS_CTRL1_SHUT_A;
-        }
-        if config.shutdown_b {
-            sys_ctrl1 |= SYS_CTRL1_SHUT_B;
-        }
-        self.write_register(Register::SysCtrl1, sys_ctrl1).await?;
+        let sys_ctrl1_flags = config.sys_ctrl1_flags;
+        self.write_register(Register::SysCtrl1, sys_ctrl1_flags.bits())
+            .await?;
 
         // SYS_CTRL2
-        let mut sys_ctrl2: u8 = 0;
-        if config.delay_disable {
-            sys_ctrl2 |= SYS_CTRL2_DELAY_DIS;
-        }
-        if config.cc_enable {
-            sys_ctrl2 |= SYS_CTRL2_CC_EN;
-        }
-        if config.cc_oneshot {
-            sys_ctrl2 |= SYS_CTRL2_CC_ONESHOT;
-        }
-        if config.discharge_on {
-            sys_ctrl2 |= SYS_CTRL2_DSG_ON;
-        }
-        if config.charge_on {
-            sys_ctrl2 |= SYS_CTRL2_CHG_ON;
-        }
-        self.write_register(Register::SysCtrl2, sys_ctrl2).await?;
+        let sys_ctrl2_flags = config.sys_ctrl2_flags;
+        self.write_register(Register::SysCtrl2, sys_ctrl2_flags.bits())
+            .await?;
 
         // OV_TRIP and UV_TRIP
         // Convert voltage thresholds to raw register values

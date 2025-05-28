@@ -9,7 +9,7 @@ use bq769x0_async_rs::{
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
-    registers::*,
+    registers::{self, *},
     Bq769x0, RegisterAccess,
 };
 use common::{create_bq769x0_driver_disabled_crc, expect_init_sequence, BQ76920_ADDR};
@@ -244,13 +244,16 @@ fn test_init_sequence() {
             BQ76920_ADDR,
             vec![
                 Register::SysCtrl1 as u8,
-                SYS_CTRL1_ADC_EN | SYS_CTRL1_TEMP_SEL,
+                (registers::SysCtrl1Flags::ADC_EN | registers::SysCtrl1Flags::TEMP_SEL).bits(),
             ],
         ),
         // Enable CC continuous readings (example)
         I2cTransaction::write(
             BQ76920_ADDR,
-            vec![Register::SysCtrl2 as u8, SYS_CTRL2_CC_EN],
+            vec![
+                Register::SysCtrl2 as u8,
+                registers::SysCtrl2Flags::CC_EN.bits(),
+            ],
         ),
     ];
     let (mut driver, i2c_mock) =
