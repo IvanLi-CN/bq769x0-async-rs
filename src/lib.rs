@@ -23,15 +23,15 @@ pub mod units; // Make the units module public
 
 pub use data_types::{
     BatteryConfig, Bq76920Measurements, CellVoltages, CoulombCounter, MosStatus, OcdDelay,
-    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, Temperatures, UvOvDelay,
+    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureSensorReadings, UvOvDelay,
 };
 use errors::Error;
 
 pub use crc::{calculate_crc, CrcMode, Disabled, Enabled};
 
-use crate::units::ElectricalResistance;
-use crate::units::{ElectricCurrent, ElectricPotential};
+use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance};
 use uom::si::electric_potential::millivolt;
+
 /// BQ769x0 driver
 pub struct Bq769x0<I2C, M: CrcMode, const N: usize>
 where
@@ -482,7 +482,7 @@ where
     }
 
     /// Reads the temperature sensors (TS1, TS2, TS3 or Die Temp)
-    pub async fn read_temperatures(&mut self) -> Result<Temperatures, Error<E>> {
+    pub async fn read_temperatures(&mut self) -> Result<TemperatureSensorReadings, Error<E>> {
         // The number of temperature sensors depends on the chip variant (BQ76920, BQ76930, BQ76940)
         // and the TEMP_SEL bit in SYS_CTRL1.
         // For BQ76920, there is one external TS pin (TS1) and internal die temp.
@@ -493,7 +493,7 @@ where
         let sys_ctrl1 = self.read_register(Register::SysCtrl1).await?;
         let temp_sel = (sys_ctrl1 & SYS_CTRL1_TEMP_SEL) != 0;
 
-        let mut temperatures = Temperatures::new();
+        let mut temperatures = TemperatureSensorReadings::new();
 
         // Read TS1
         let ts1_raw_data = self.read_registers(Register::Ts1Hi, 2).await?;

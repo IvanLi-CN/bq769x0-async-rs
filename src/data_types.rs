@@ -1,4 +1,6 @@
-use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance};
+use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance, TemperatureInterval};
+use uom::si::electric_potential::volt; // Add this import
+use uom::si::temperature_interval::degree_celsius;
 use uom::si::{
     electric_current::milliampere, electric_potential::millivolt, electrical_resistance::milliohm,
 };
@@ -27,7 +29,7 @@ impl<const N: usize> CellVoltages<N> {
 
 /// Represents the measured temperatures.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Temperatures {
+pub struct TemperatureSensorReadings {
     /// Voltage from TS1 sensor (if external thermistor) or Die Temperature (if internal).
     pub ts1: ElectricPotential,
     /// Voltage from TS2 sensor (BQ76930/40 only) or Die Temperature.
@@ -38,21 +40,70 @@ pub struct Temperatures {
     pub is_thermistor: bool,
 }
 
-impl Default for Temperatures {
+impl Default for TemperatureSensorReadings {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Temperatures {
+impl TemperatureSensorReadings {
+    /// Creates a new instance of `TemperatureSensorReadings` with default values.
     pub fn new() -> Self {
         Self {
-            ts1: ElectricPotential::new::<millivolt>(0.0),
+            ts1: ElectricPotential::new::<uom::si::electric_potential::volt>(0.0),
             ts2: None,
             ts3: None,
             is_thermistor: false,
         }
     }
+
+    /// Converts the raw sensor voltage readings into temperature data.
+    /// Requires NTC thermistor parameters if the readings are in thermistor mode.
+    pub fn into_temperature_data(
+        &self,
+        ntc_params: Option<&NtcParameters>,
+    ) -> Result<TemperatureData, &'static str> {
+        if self.is_thermistor {
+            // External thermistor: calculate resistance, then temperature
+            // External thermistor: calculate resistance, then temperature
+            if ntc_params.is_none() {
+                return Err("NTC parameters are required for thermistor readings");
+            }
+
+            // Convert resistance to temperature using B-value formula (without ln)
+            // This part needs to be replaced with the lookup table logic
+            // For now, I will keep the structure but comment out the ln-based calculation
+            // and return a placeholder or error until the lookup table is implemented.
+
+            // Placeholder for lookup table implementation
+            Err("Lookup table implementation is pending")
+        } else {
+            // Internal die temperature: calculate temperature
+            let ts1_temp_celsius = 25.0 - (self.ts1.get::<volt>() - 1.2) / 0.0042;
+            let ts2_temp_celsius = self.ts2.map(|v| 25.0 - (v.get::<volt>() - 1.2) / 0.0042);
+            let ts3_temp_celsius = self.ts3.map(|v| 25.0 - (v.get::<volt>() - 1.2) / 0.0042);
+
+            Ok(TemperatureData {
+                ts1: TemperatureInterval::new::<degree_celsius>(ts1_temp_celsius),
+                ts2: ts2_temp_celsius.map(TemperatureInterval::new::<degree_celsius>),
+                ts3: ts3_temp_celsius.map(TemperatureInterval::new::<degree_celsius>),
+            })
+        }
+    }
+}
+
+// Define a struct to hold NTC thermistor parameters
+pub struct NtcParameters {
+    pub b_value: f32,                             // B value
+    pub ref_temp_k: TemperatureInterval,          // Reference temperature in Kelvin
+    pub ref_resistance_ohm: ElectricalResistance, // Reference resistance in Ohm
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct TemperatureData {
+    pub ts1: TemperatureInterval,
+    pub ts2: Option<TemperatureInterval>,
+    pub ts3: Option<TemperatureInterval>,
 }
 
 /// Represents the measured pack current from the Coulomb Counter.
@@ -213,7 +264,7 @@ impl MosStatus {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Bq76920Measurements<const N: usize> {
     pub cell_voltages: CellVoltages<N>,
-    pub temperatures: Temperatures,
+    pub temperatures: TemperatureSensorReadings,
     pub current: ElectricCurrent,
     pub system_status: SystemStatus,
     pub mos_status: MosStatus,
@@ -223,7 +274,7 @@ impl<const N: usize> Default for Bq76920Measurements<N> {
     fn default() -> Self {
         Self {
             cell_voltages: CellVoltages::new(),
-            temperatures: Temperatures::new(),
+            temperatures: TemperatureSensorReadings::new(),
             current: ElectricCurrent::new::<milliampere>(0.0),
             system_status: SystemStatus::new(0),
             mos_status: MosStatus::new(0),

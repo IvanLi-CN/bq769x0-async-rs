@@ -1,78 +1,165 @@
-# 详细计划
+# 温度计算功能实现方案 (查表法)
 
-## 任务目标
-参考 `docs/bq76920.md` 文档，检查 `tests` 目录下的测试用例是否正确无误。
+## 目标
 
-## 阶段 1: 信息收集与初步理解
+在 `TemperatureData` 结构体中存储转换后的温度值。`TemperatureSensorReadings` 结构体存储原始电压读数，并提供方法将电压转换为物理量（内部芯片温度或外部热敏电阻阻值）。热敏电阻阻值到温度的转换使用查表法。
 
-1.  **阅读 `docs/bq76920.md` 文档**：
-    *   重点关注以下章节，提取关键信息：
-        *   **7 Specifications** (特别是 `7.5 Electrical Characteristics` 和 `7.6 Timing Requirements`)：获取 ADC 校准、温度测量、电流测量、保护阈值和延迟的电气特性、单位和计算公式。
-        *   **8 Detailed Description** (特别是 `8.3.1.1 Measurement Subsystem Overview`, `8.3.1.2 Protection Subsystem`, `8.3.1.3 Control Subsystem`, `8.3.1.4 Communications Subsystem` 和 `8.5 Register Maps`)：获取寄存器地址、位定义、默认值、I2C 通信协议（包括 CRC 算法细节）、不同 BQ769x0 型号的特性（如电池串数、平衡寄存器数量、TSn 引脚功能）。
-    *   记录所有相关的计算公式、表格数据和重要说明。
+## 现有结构体
 
-2.  **初步浏览 `tests` 目录下的所有 Rust 文件**：
-    *   `tests/common.rs`：理解其提供的 Mock I2C 实现和辅助函数。
-    *   `tests/init_basic.rs`：了解基本的 I2C 读写和初始化序列测试。
-    *   `tests/other_config.rs`：了解进入 SHIP 模式、ALERT 覆盖、充电/放电控制以及电池平衡的测试。
-    *   `tests/protection_config.rs`：了解保护配置（OV, UV, OCD, SCD）的测试。
-    *   `tests/status_monitor.rs`：了解各种测量值（电池电压、总电压、温度、电流、状态）的读取测试。
+```rust
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct TemperatureSensorReadings {
+    /// Voltage from TS1 sensor (if external thermistor) or Die Temperature (if internal).
+    pub ts1: ElectricPotential,
+    /// Voltage from TS2 sensor (BQ76930/40 only) or Die Temperature.
+    pub ts2: Option<ElectricPotential>,
+    /// Voltage from TS3 sensor (BQ76940 only) or Die Temperature.
+    pub ts3: Option<ElectricPotential>,
+    /// Indicates if the temperature readings are Die Temp (false) or Thermistor resistance (true).
+    pub is_thermistor: bool,
+}
+```
 
-## 阶段 2: 深入分析与交叉验证 (在 `code` 模式下执行)
+## 数据手册参考 (docs/bq76920.md)
 
-1.  **I2C CRC 验证**：
-    *   根据文档 `8.3.1.4 Communications Subsystem` 中描述的 CRC 多项式 (`x^8 + x^2 + x + 1`) 和初始值 (`0`)，实现 CRC-8 计算函数。
-    *   对照 `tests/init_basic.rs` 中的 `test_read_register_enabled_crc_success`, `test_write_register_enabled_crc_success`, `test_read_registers_enabled_crc_success`, `test_write_registers_enabled_crc_success` 测试用例，验证其 CRC 期望值是否与计算结果一致。特别注意单字节和块读写时 CRC 计算的字节范围。
+### 内部芯片温度转换
 
-2.  **电池平衡寄存器逻辑验证**：
-    *   详细分析 `tests/other_config.rs` 中 `set_cell_balancing` 函数的实现，以及 `test_set_cell_balancing_bq76930` 和 `test_set_cell_balancing_bq76940` 的期望值。
-    *   根据 `docs/bq76920.md` 中 `8.5 Register Maps` 章节对 `CELLBAL1`, `CELLBAL2`, `CELLBAL3` 寄存器的定义，以及 `Section 5 Device Comparison Table` 中不同 BQ769x0 型号支持的电池串数，确认 `set_cell_balancing` 函数的逻辑是否正确处理了不同型号的电池平衡位映射。
-    *   如果发现 `u16` 类型不足以表示 BQ76940 的所有电池平衡位，将提出相应修改建议。
+当 `TEMP_SEL = 0` 时，TSx 寄存器存储的是与芯片温度相关的电压读数。转换公式为：
 
-3.  **保护阈值计算验证**：
-    *   根据 `docs/bq76920.md` 中 `8.3.1.2.1 Integrated Hardware Protections` 章节的公式和 `7.5 Electrical Characteristics` 中的表格，精确计算 `tests/protection_config.rs` 中 `test_set_config_basic` 测试用例中 `OV_TRIP`, `UV_TRIP`, `PROTECT1`, `PROTECT2` 寄存器的预期值。
-    *   特别关注 `RSNS` 位对 OCD/SCD 阈值的影响，以及 `BatteryConfig` 中 `scd_limit` 和 `ocd_limit` 的值是否在文档规定的范围内。
+`TEMP_DIE = 25.0 - (V_TSX_volts - 1.2) / 0.0042`
 
-4.  **测量值转换公式验证**：
-    *   **Pack Voltage**: 重点验证 `tests/status_monitor.rs` 中 `test_read_pack_voltage` 测试用例中 `pack_voltage.get::<millivolt>()` 的计算是否正确。对照文档 `8.3.1.1.6 16-Bit Pack Voltage` 中的公式 `V(BAT) = 4 × GAIN × ADC(cell) + (HCells × OFFSET)`，确认 `ADC(cell)` 的含义以及乘以 4 的因子是否正确应用。
-    *   **Temperature**: 验证 `tests/status_monitor.rs` 中 `test_read_temperatures_die_temp` 和 `test_read_temperatures_external_thermistor` 测试用例中温度转换的完整性。对照文档 `8.3.1.1.4 External Thermistor` 和 `8.3.1.1.5 Die Temperature Monitor` 中的公式，确保 `V_TSX` 和最终温度的计算都得到了验证。
-    *   **Current**: 验证 `tests/status_monitor.rs` 中 `test_read_current` 和 `test_read_all_measurements` 测试用例中电流转换的正确性。对照文档 `8.3.1.1.3 16-Bit CC` 中的公式，确认 `RSENSE` 值在计算中的使用。
+其中 `V_TSX_volts` 是 TSx 引脚的电压值（单位：伏特）。
 
-5.  **`common::create_driver_with_adc_calibration` 行为确认**：
-    *   确认 `tests/common.rs` 中 `MockI2c` 的 `Clone` 实现是否确保了 `driver` 内部使用的 `i2c_mock` 和函数返回的 `i2c_mock` 共享同一个底层 mock 状态，以保证测试的有效性。
+### 外部热敏电阻电阻值计算
 
-## 阶段 3: 总结与建议
+当 `TEMP_SEL = 1` 时，TSx 寄存器存储的是与外部热敏电阻相关的电压读数。使用 10 kΩ NTC 103AT 热敏电阻和内部 10 kΩ 上拉电阻。电阻值计算公式为：
 
-1.  **列出发现的问题**：在对比过程中，记录所有不一致、潜在错误或可以改进的地方。
-2.  **提供修改建议**：针对发现的问题，提出具体的代码修改建议。
-3.  **生成 Mermaid 图**：如果需要，为复杂的逻辑（如 CRC 计算流程、OV/UV 阈值计算流程、电池平衡寄存器映射）创建 Mermaid 图，以增强可读性。
+`R_TS = (10000.0 * V_TSX_volts) / (3.3 - V_TSX_volts)`
 
----
+其中 `V_TSX_volts` 是 TSx 引脚的电压值（单位：伏特），10000.0 是内部上拉电阻的阻值（单位：欧姆），3.3 是内部调节器的标称电压（单位：伏特）。
 
-### Mermaid 图示例 (CRC 计算流程)
+## 方案设计 (查表法)
+
+1.  `TemperatureSensorReadings` 结构体保持不变。
+2.  定义一个新的结构体 `TemperatureData`，用于存储转换后的温度值。
+
+    ```rust
+    use uom::si::temperature::ThermodynamicTemperature;
+
+    #[derive(Debug, Copy, Clone, PartialEq)]
+    pub struct TemperatureData {
+        pub ts1: ThermodynamicTemperature,
+        pub ts2: Option<ThermodynamicTemperature>,
+        pub ts3: Option<ThermodynamicTemperature>,
+    }
+    ```
+
+3.  定义一个函数 `convert_resistance_to_temperature`，该函数接收热敏电阻阻值和电阻-温度对照表作为输入，并返回温度。对照表的数据结构需要定义。
+
+    ```rust
+    use uom::si::electrical_resistance::ElectricalResistance;
+    use uom::si::temperature::ThermodynamicTemperature;
+
+    // Example: Define a simple lookup table as a slice of tuples (resistance_ohm, temperature_celsius)
+    // The actual table data needs to be provided by the user or configuration.
+    pub type ResistanceTemperatureTable = &'static [(f32, f32)];
+
+    /// Converts thermistor resistance to temperature using a lookup table.
+    /// Assumes the table is sorted by resistance in descending order.
+    pub fn convert_resistance_to_temperature(
+        resistance: ElectricalResistance,
+        lookup_table: ResistanceTemperatureTable,
+    ) -> Result<ThermodynamicTemperature, &'static str> {
+        let r_ohm = resistance.get::<uom::si::electrical_resistance::ohm>();
+
+        if lookup_table.is_empty() {
+            return Err("Lookup table is empty");
+        }
+
+        // Find the two points in the table that bracket the given resistance
+        let mut iter = lookup_table.iter();
+        let mut prev_point = iter.next().unwrap(); // Table is not empty
+
+        if r_ohm >= prev_point.0 {
+            // Resistance is greater than or equal to the highest resistance in the table
+            Ok(ThermodynamicTemperature::new::<uom::si::temperature::degree_celsius>(prev_point.1))
+        } else {
+            for current_point in iter {
+                if r_ohm >= current_point.0 {
+                    // The resistance is between prev_point and current_point, perform linear interpolation
+                    let r1 = prev_point.0;
+                    let t1 = prev_point.1;
+                    let r2 = current_point.0;
+                    let t2 = current_point.1;
+
+                    let interpolated_temp = t1 + (r_ohm - r1) * (t2 - t1) / (r2 - r1);
+                    return Ok(ThermodynamicTemperature::new::<uom::si::temperature::degree_celsius>(interpolated_temp));
+                }
+                prev_point = current_point;
+            }
+            // Resistance is less than the lowest resistance in the table
+            Ok(ThermodynamicTemperature::new::<uom::si::temperature::degree_celsius>(prev_point.1))
+        }
+    }
+    ```
+
+4.  在 `TemperatureSensorReadings` 结构体中，修改 `into_temperature_data()` 方法：
+
+    ```rust
+    use uom::si::electric_potential::volt;
+    use uom::si::temperature::{ThermodynamicTemperature, degree_celsius};
+    use uom::si::electrical_resistance::ElectricalResistance;
+
+    impl TemperatureSensorReadings {
+        /// Converts the raw sensor voltage readings into temperature data.
+        /// Requires a resistance-temperature lookup table if the readings are in thermistor mode.
+        pub fn into_temperature_data(&self, lookup_table: Option<ResistanceTemperatureTable>) -> Result<TemperatureData, &'static str> {
+            if self.is_thermistor {
+                // External thermistor: calculate resistance, then temperature using lookup table
+                if let Some(table) = lookup_table {
+                    let ts1_resistance_ohm = (10000.0 * self.ts1.get::<volt>()) / (3.3 - self.ts1.get::<volt>());
+                    let ts2_resistance_ohm = self.ts2.map(|v| (10000.0 * v.get::<volt>()) / (3.3 - v.get::<volt>()));
+                    let ts3_resistance_ohm = self.ts3.map(|v| (10000.0 * v.get::<volt>()) / (3.3 - v.get::<volt>()));
+
+                    let ts1_temp = convert_resistance_to_temperature(ElectricalResistance::new::<uom::si::electrical_resistance::ohm>(ts1_resistance_ohm), table)?;
+                    let ts2_temp = ts2_resistance_ohm.map(|r| convert_resistance_to_temperature(ElectricalResistance::new::<uom::si::electrical_resistance::ohm>(r), table)).transpose()?;
+                    let ts3_temp = ts3_resistance_ohm.map(|r| convert_resistance_to_temperature(ElectricalResistance::new::<uom::si::electrical_resistance::ohm>(r), table)).transpose()?;
+
+                    Ok(TemperatureData {
+                        ts1: ts1_temp,
+                        ts2: ts2_temp,
+                        ts3: ts3_temp,
+                    })
+                } else {
+                    Err("Lookup table is required for thermistor readings")
+                }
+            } else {
+                // Internal die temperature: calculate temperature
+                let ts1_temp_celsius = 25.0 - (self.ts1.get::<volt>() - 1.2) / 0.0042;
+                let ts2_temp_celsius = self.ts2.map(|v| 25.0 - (v.get::<volt>() - 1.2) / 0.0042);
+                let ts3_temp_celsius = self.ts3.map(|v| 25.0 - (v.get::<volt>() - 1.2) / 0.0042);
+
+                Ok(TemperatureData {
+                    ts1: ThermodynamicTemperature::new::<degree_celsius>(ts1_temp_celsius),
+                    ts2: ts2_temp_celsius.map(|t| ThermodynamicTemperature::new::<degree_celsius>(t)),
+                    ts3: ts3_temp_celsius.map(|t| ThermodynamicTemperature::new::<degree_celsius>(t)),
+                })
+            }
+        }
+    }
+    ```
+
+## 流程图 (查表法)
 
 ```mermaid
 graph TD
-    A[开始] --> B{CRC 模式启用?};
-    B -- 是 --> C{读操作还是写操作?};
-    C -- 读 --> D[读取从设备地址和数据字节];
-    C -- 写 --> E[写入从设备地址、寄存器地址和数据字节];
-    D --> F{单字节还是块读?};
-    E --> G{单字节还是块写?};
-    F -- 单字节 --> H[对从设备地址和数据字节计算 CRC];
-    F -- 块读 --> I[对第一个数据字节计算 CRC (含从设备地址)];
-    I --> J[对后续数据字节单独计算 CRC];
-    G -- 单字节 --> K[对从设备地址、寄存器地址和数据计算 CRC];
-    G -- 块写 --> L[对第一个数据字节计算 CRC (含从设备地址和寄存器地址)];
-    L --> M[对后续数据字节单独计算 CRC];
-    H --> N[附加 CRC 到数据];
-    I --> N;
-    J --> N;
-    K --> N;
-    M --> N;
-    N --> O[发送/接收数据和 CRC];
-    O --> P{CRC 校验通过?};
-    P -- 否 --> Q[返回 CRC 错误];
-    P -- 是 --> R[返回成功];
-    B -- 否 --> S[直接发送/接收数据];
-    S --> R;
+    A[TemperatureSensorReadings struct<br/>(电压, is_thermistor)] --> B{into_temperature_data(lookup_table)};
+    B -- 如果 is_thermistor = true --> C[计算阻值 (Ω)];
+    C --> D[convert_resistance_to_temperature(阻值, lookup_table)];
+    D -- 返回温度 (°C) --> E[TemperatureData<br/>(温度 °C)];
+    B -- 如果 is_thermistor = false --> F[计算芯片温度 (°C)];
+    F --> E[TemperatureData<br/>(温度 °C)];
+    E --> G[调用方 (驱动程序)];
+```
+
+请注意，您需要提供实际的电阻-温度对照表数据，并将其作为 `lookup_table` 参数传递给 `into_temperature_data` 方法。

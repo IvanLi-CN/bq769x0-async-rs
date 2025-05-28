@@ -2,6 +2,7 @@
 mod common;
 
 use approx::assert_relative_eq;
+use bq769x0_async_rs::units::{ElectricPotential, ElectricalResistance, TemperatureInterval}; // Add TemperatureInterval
 use bq769x0_async_rs::{
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
@@ -13,9 +14,12 @@ use common::{create_bq769x0_driver_disabled_crc, BQ76920_ADDR};
 use embedded_hal::i2c::{ErrorType, I2c, Operation};
 use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use heapless::Vec;
-use uom::si::electric_current::milliampere;
-use uom::si::electric_potential::millivolt;
-use uom::si::thermodynamic_temperature::kelvin;
+use uom::si::{
+    electric_current::milliampere,
+    electric_potential::{millivolt, volt},
+    electrical_resistance::ohm,
+    temperature_interval::{degree_celsius, kelvin}, // Import from temperature_interval
+};
 
 #[test]
 fn test_read_cell_voltages_bq76920() {
@@ -88,9 +92,9 @@ fn test_read_temperatures_die_temp() {
     let temperatures = result.unwrap();
     // V_TSX = 3141 * 382 uV/LSB = 1200002 uV = 1200.002 mV
     assert_relative_eq!(
-        temperatures.ts1.get::<millivolt>(),
-        1199.862, // Expected V_TSX for ADC = 3141
-        epsilon = 0.01
+        temperatures.ts1.get::<millivolt>(), // Asserting voltage in millivolts
+        1199.862,                            // Expected V_TSX for ADC = 3141
+        epsilon = 0.01                       // Adjust epsilon as needed for precision
     );
     assert_eq!(temperatures.is_thermistor, false);
     i2c_mock.done();
@@ -117,7 +121,7 @@ fn test_read_temperatures_external_thermistor() {
     let temperatures = result.unwrap();
     // V_TSX = 1200 * 382 uV/LSB = 458.4 mV
     assert_relative_eq!(
-        temperatures.ts1.get::<millivolt>(),
+        temperatures.ts1.get::<millivolt>(), // Asserting voltage in millivolts
         1200.0 * 365.0 / 1000.0,
         epsilon = 0.01
     ); // V_TSX = 1200 * (365 uV/LSB) = 438000 uV = 438.0 mV
@@ -213,7 +217,7 @@ fn test_read_all_measurements() {
         ), // Charge and Discharge ON
     ];
     let (mut driver, i2c_mock) =
-        common::create_bq769x0_driver_disabled_crc::<5>(&expectations, BQ76920_ADDR);
+        create_bq769x0_driver_disabled_crc::<5>(&expectations, BQ76920_ADDR);
     let result = driver.read_all_measurements();
     assert!(result.is_ok());
     let measurements = result.unwrap();
@@ -269,4 +273,36 @@ fn test_read_adc_gain_offset_registers() {
     assert_eq!(gain2_result, Ok(0x20));
 
     i2c_mock.done();
+}
+
+#[test]
+fn test_into_temperature_data_die_temp() {
+    // Simulate a TemperatureSensorReadings instance with Die Temp data
+    let readings = TemperatureSensorReadings {
+        ts1: ElectricPotential::new::<volt>(1.2), // Simulate 1.2V for 25C Die Temp
+        ts2: Some(ElectricPotential::new::<volt>(1.1)), // Simulate a different voltage
+        ts3: None,                                // Simulate no TS3
+        is_thermistor: false,                     // Indicate Die Temp mode
+    };
+
+    // Convert to TemperatureData
+    // Pass None for ntc_params as it's Die Temp
+    let temperature_data = readings.into_temperature_data(None);
+
+    // Assert the result is Ok and the temperatures are correct
+    assert!(temperature_data.is_ok());
+    let temps = temperature_data.unwrap();
+
+    // Expected TS1 temperature: 25.0 - (1.2 - 1.2) / 0.0042 = 25.0 C
+    assert_relative_eq!(temps.ts1.get::<degree_celsius>(), 25.0, epsilon = 0.001);
+
+    // Expected TS2 temperature: 25.0 - (1.1 - 1.2) / 0.0042 = 25.0 - (-0.1 / 0.0042) = 25.0 + 23.81 = 48.81 C
+    assert!(temps.ts2.is_some());
+    assert_relative_eq!(
+        temps.ts2.unwrap().get::<degree_celsius>(),
+        48.81,
+        epsilon = 0.01
+    );
+
+    assert!(temps.ts3.is_none());
 }
