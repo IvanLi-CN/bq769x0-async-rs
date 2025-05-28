@@ -121,7 +121,7 @@ pub enum Register {
 bitflags! {
     /// System Status Register Flags
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct SysStatFlags: u8 {
         /// CC Ready Flag
         const CC_READY = 1 << 7;
@@ -143,7 +143,7 @@ bitflags! {
 bitflags! {
     /// System Control 1 Register Flags
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct SysCtrl1Flags: u8 {
         /// Load Present Flag
         const LOAD_PRESENT = 1 << 7;
@@ -161,7 +161,7 @@ bitflags! {
 bitflags! {
     /// System Control 2 Register Flags
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct SysCtrl2Flags: u8 {
         /// Delay Disable
         const DELAY_DIS = 1 << 7;
@@ -179,7 +179,7 @@ bitflags! {
 bitflags! {
     /// Protection 1 Register Flags (SCD)
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct Protect1Flags: u8 {
         /// RSNS bit
         const RSNS = 1 << 7;
@@ -193,7 +193,7 @@ bitflags! {
 bitflags! {
     /// Protection 2 Register Flags (OCD)
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct Protect2Flags: u8 {
         /// OCD_D2:0 bits (Overcurrent Delay)
         const OCD_DELAY_MASK = 0b111 << 4;
@@ -205,7 +205,7 @@ bitflags! {
 bitflags! {
     /// Protection 3 Register Flags (OV/UV Delay)
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct Protect3Flags: u8 {
         /// UV_D1:0 bits (Undervoltage Delay)
         const UV_DELAY_MASK = 0b11 << 6;
@@ -217,7 +217,7 @@ bitflags! {
 bitflags! {
     /// Cell Balance 1 Register Flags (Cells 1-5)
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct CellBal1Flags: u8 {
         const BAL1 = 1 << 0;
         const BAL2 = 1 << 1;
@@ -230,7 +230,7 @@ bitflags! {
 bitflags! {
     /// Cell Balance 2 Register Flags (Cells 6-10)
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct CellBal2Flags: u8 {
         const BAL6 = 1 << 0;
         const BAL7 = 1 << 1;
@@ -243,7 +243,7 @@ bitflags! {
 bitflags! {
     /// Cell Balance 3 Register Flags (Cells 11-15)
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+    #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s: &Self| s.bits()))]
     pub struct CellBal3Flags: u8 {
         const BAL11 = 1 << 0;
         const BAL12 = 1 << 1;

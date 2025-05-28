@@ -153,7 +153,7 @@ pub enum TempSensor {
 
 /// Represents the system status flags.
 #[derive(Debug, Copy, Clone, PartialEq)]
-#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::new), bw(map = |&s: &Self| s.0.bits()))]
 pub struct SystemStatus(pub SysStatFlags);
 
 impl SystemStatus {
@@ -164,7 +164,7 @@ impl SystemStatus {
 
 /// Represents the charge/discharge MOS status.
 #[derive(Debug, Copy, Clone, PartialEq)]
-#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::from_bits_truncate), bw(map = |&s| s.bits()))]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::new), bw(map = |&s: &Self| s.0.bits()))]
 pub struct MosStatus(pub SysCtrl2Flags);
 
 impl MosStatus {
