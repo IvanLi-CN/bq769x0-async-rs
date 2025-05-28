@@ -1,5 +1,9 @@
-#[derive(Clone, Copy)]
+#[cfg(feature = "binrw")]
+use binrw::{BinRead, BinWrite};
+
+#[derive(Clone, Copy, Debug, PartialEq)] // Added Debug and PartialEq for consistency and potential future use
 #[repr(u8)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(repr = u8), bw(repr = u8))]
 pub enum Register {
     /// System Status Register
     SysStat = 0x00,

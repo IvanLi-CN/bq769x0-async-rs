@@ -1,15 +1,21 @@
 use crate::units::{ElectricCurrent, ElectricPotential, ElectricalResistance, TemperatureInterval};
-use uom::si::electric_potential::volt; // Add this import
+use uom::si::electric_potential::volt;
 use uom::si::temperature_interval::degree_celsius;
 use uom::si::{
     electric_current::milliampere, electric_potential::millivolt, electrical_resistance::milliohm,
 };
 
+#[cfg(feature = "binrw")]
+use binrw::{BinRead, BinWrite};
+
 /// Represents the measured cell voltages.
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct CellVoltages<const N: usize> {
     /// Voltage of cell 1 to 15.
     /// The number of valid cells depends on the chip model (BQ76920: 5, BQ76930: 10, BQ76940: 15).
+    #[cfg_attr(feature = "binrw", br(map = |x: [f32; N]| x.map(|v| ElectricPotential::new::<millivolt>(v))))]
+    #[cfg_attr(feature = "binrw", bw(map = |x: &[ElectricPotential; N]| x.map(|v| v.get::<millivolt>() )))]
     pub voltages: [ElectricPotential; N],
 }
 
@@ -29,14 +35,23 @@ impl<const N: usize> CellVoltages<N> {
 
 /// Represents the measured temperatures.
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct TemperatureSensorReadings {
     /// Voltage from TS1 sensor (if external thermistor) or Die Temperature (if internal).
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricPotential::new::<millivolt>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<millivolt>()))]
     pub ts1: ElectricPotential,
     /// Voltage from TS2 sensor (BQ76930/40 only) or Die Temperature.
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| if x.is_nan() { None } else { Some(ElectricPotential::new::<millivolt>(x)) }))]
+    #[cfg_attr(feature = "binrw", bw(map = |x: &Option<ElectricPotential>| x.map_or(f32::NAN, |v| v.get::<millivolt>())))]
     pub ts2: Option<ElectricPotential>,
     /// Voltage from TS3 sensor (BQ76940 only) or Die Temperature.
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| if x.is_nan() { None } else { Some(ElectricPotential::new::<millivolt>(x)) }))]
+    #[cfg_attr(feature = "binrw", bw(map = |x: &Option<ElectricPotential>| x.map_or(f32::NAN, |v| v.get::<millivolt>())))]
     pub ts3: Option<ElectricPotential>,
     /// Indicates if the temperature readings are Die Temp (false) or Thermistor resistance (true).
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub is_thermistor: bool,
 }
 
@@ -93,27 +108,43 @@ impl TemperatureSensorReadings {
 }
 
 // Define a struct to hold NTC thermistor parameters
+#[derive(Debug, PartialEq)] // Added Debug and PartialEq
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct NtcParameters {
-    pub b_value: f32,                             // B value
-    pub ref_temp_k: TemperatureInterval,          // Reference temperature in Kelvin
+    pub b_value: f32, // B value
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| TemperatureInterval::new::<uom::si::temperature_interval::kelvin>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<uom::si::temperature_interval::kelvin>()))]
+    pub ref_temp_k: TemperatureInterval, // Reference temperature in Kelvin
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricalResistance::new::<uom::si::electrical_resistance::ohm>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<uom::si::electrical_resistance::ohm>()))]
     pub ref_resistance_ohm: ElectricalResistance, // Reference resistance in Ohm
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct TemperatureData {
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| TemperatureInterval::new::<degree_celsius>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<degree_celsius>()))]
     pub ts1: TemperatureInterval,
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| if x.is_nan() { None } else { Some(TemperatureInterval::new::<degree_celsius>(x)) }))]
+    #[cfg_attr(feature = "binrw", bw(map = |x: &Option<TemperatureInterval>| x.map_or(f32::NAN, |v| v.get::<degree_celsius>())))]
     pub ts2: Option<TemperatureInterval>,
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| if x.is_nan() { None } else { Some(TemperatureInterval::new::<degree_celsius>(x)) }))]
+    #[cfg_attr(feature = "binrw", bw(map = |x: &Option<TemperatureInterval>| x.map_or(f32::NAN, |v| v.get::<degree_celsius>())))]
     pub ts3: Option<TemperatureInterval>,
 }
 
 /// Represents the measured pack current from the Coulomb Counter.
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct CoulombCounter {
     /// Raw Coulomb Counter value. Needs conversion based on CC_CFG and Rsense.
     pub raw_cc: i16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u8)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(repr = u8), bw(repr = u8))]
 pub enum TempSensor {
     Internal,
     External,
@@ -147,7 +178,62 @@ impl SystemStatus {
     }
 }
 
+#[cfg(feature = "binrw")]
+impl BinRead for SystemStatus {
+    type Args<'a> = ();
+
+    fn read_options<R: binrw::io::Read + binrw::io::Seek>(
+        reader: &mut R,
+        endian: binrw::Endian,
+        _args: Self::Args<'_>,
+    ) -> binrw::BinResult<Self> {
+        let status_byte = u8::read_options(reader, endian, ())?;
+        Ok(SystemStatus::new(status_byte))
+    }
+}
+
+#[cfg(feature = "binrw")]
+impl BinWrite for SystemStatus {
+    type Args<'a> = ();
+
+    fn write_options<W: binrw::io::Write + binrw::io::Seek>(
+        &self,
+        writer: &mut W,
+        endian: binrw::Endian,
+        _args: Self::Args<'_>,
+    ) -> binrw::BinResult<()> {
+        let mut status_byte = 0u8;
+        if self.cc_ready {
+            status_byte |= 0b1000_0000;
+        }
+        if self.device_xready {
+            status_byte |= 0b0010_0000;
+        }
+        if self.ovrd_alert {
+            status_byte |= 0b0001_0000;
+        }
+        if self.uv {
+            status_byte |= 0b0000_1000;
+        }
+        if self.ov {
+            status_byte |= 0b0000_0100;
+        }
+        if self.scd {
+            status_byte |= 0b0000_0010;
+        }
+        if self.ocd {
+            status_byte |= 0b0000_0001;
+        }
+        if self.ovr_temp {
+            status_byte |= 0b0100_0000;
+        }
+        status_byte.write_options(writer, endian, ())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u8)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(repr = u8), bw(repr = u8))]
 pub enum ScdDelay {
     Delay70us,
     Delay100us,
@@ -156,6 +242,8 @@ pub enum ScdDelay {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u8)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(repr = u8), bw(repr = u8))]
 pub enum OcdDelay {
     Delay10ms,
     Delay20ms,
@@ -168,6 +256,8 @@ pub enum OcdDelay {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u8)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(repr = u8), bw(repr = u8))]
 pub enum UvOvDelay {
     Delay1s,
     Delay2s,
@@ -176,40 +266,72 @@ pub enum UvOvDelay {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct ProtectionConfig {
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub rsns_enable: bool,
     pub scd_delay: ScdDelay,
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricCurrent::new::<milliampere>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<milliampere>()))]
     pub scd_limit: ElectricCurrent, // 短路放电电流限制
     pub ocd_delay: OcdDelay,
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricCurrent::new::<milliampere>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<milliampere>()))]
     pub ocd_limit: ElectricCurrent, // 过流放电电流限制
     pub uv_delay: UvOvDelay,
     pub ov_delay: UvOvDelay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct BatteryConfig {
     // SYS_CTRL1 related
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub load_present: bool,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub adc_enable: bool,
     pub temp_sensor_selection: TempSensor,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub shutdown_a: bool,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub shutdown_b: bool,
 
     // SYS_CTRL2 related
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub delay_disable: bool,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub cc_enable: bool,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub cc_oneshot: bool,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub discharge_on: bool,
+    #[cfg_attr(feature = "binrw", br(map = |x: u8| x != 0))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| *x as u8))]
     pub charge_on: bool,
 
     // Voltage thresholds
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricPotential::new::<millivolt>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<millivolt>()))]
     pub overvoltage_trip: ElectricPotential,
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricPotential::new::<millivolt>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<millivolt>()))]
     pub undervoltage_trip: ElectricPotential,
 
     // Protection configurations
     pub protection_config: ProtectionConfig,
 
     // Add Rsense value for current calculation
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricalResistance::new::<milliohm>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<milliohm>()))]
     pub rsense: ElectricalResistance, // 串联电阻值
 
                                       // Add other configuration fields as needed
@@ -260,11 +382,49 @@ impl MosStatus {
     }
 }
 
+#[cfg(feature = "binrw")]
+impl BinRead for MosStatus {
+    type Args<'a> = ();
+
+    fn read_options<R: binrw::io::Read + binrw::io::Seek>(
+        reader: &mut R,
+        endian: binrw::Endian,
+        _args: Self::Args<'_>,
+    ) -> binrw::BinResult<Self> {
+        let sys_ctrl2_byte = u8::read_options(reader, endian, ())?;
+        Ok(MosStatus::new(sys_ctrl2_byte))
+    }
+}
+
+#[cfg(feature = "binrw")]
+impl BinWrite for MosStatus {
+    type Args<'a> = ();
+
+    fn write_options<W: binrw::io::Write + binrw::io::Seek>(
+        &self,
+        writer: &mut W,
+        endian: binrw::Endian,
+        _args: Self::Args<'_>,
+    ) -> binrw::BinResult<()> {
+        let mut sys_ctrl2_byte = 0u8;
+        if self.charge_on {
+            sys_ctrl2_byte |= 0b0000_0001;
+        }
+        if self.discharge_on {
+            sys_ctrl2_byte |= 0b0000_0010;
+        }
+        sys_ctrl2_byte.write_options(writer, endian, ())
+    }
+}
+
 /// Represents the BQ76920 measurements.
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct Bq76920Measurements<const N: usize> {
     pub cell_voltages: CellVoltages<N>,
     pub temperatures: TemperatureSensorReadings,
+    #[cfg_attr(feature = "binrw", br(map = |x: f32| ElectricCurrent::new::<milliampere>(x)))]
+    #[cfg_attr(feature = "binrw", bw(map = |x| x.get::<milliampere>()))]
     pub current: ElectricCurrent,
     pub system_status: SystemStatus,
     pub mos_status: MosStatus,

@@ -2,23 +2,18 @@
 mod common;
 
 use approx::assert_relative_eq;
-use bq769x0_async_rs::units::{ElectricPotential, ElectricalResistance, TemperatureInterval}; // Add TemperatureInterval
+use bq769x0_async_rs::units::ElectricPotential;
 use bq769x0_async_rs::{
-    crc::{CrcMode, Disabled, Enabled},
-    data_types::*,
-    errors::Error,
-    registers::*,
-    Bq769x0, RegisterAccess,
+    data_types::{CoulombCounter, TemperatureSensorReadings}, // Removed SystemStatus
+    registers::{Register, SYS_CTRL1_TEMP_SEL, SYS_STAT_OV, SYS_STAT_UV},
+    RegisterAccess,
 };
 use common::{create_bq769x0_driver_disabled_crc, BQ76920_ADDR};
-use embedded_hal::i2c::{ErrorType, I2c, Operation};
-use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
-use heapless::Vec;
+use embedded_hal_mock::eh1::i2c::Transaction as I2cTransaction;
 use uom::si::{
     electric_current::milliampere,
     electric_potential::{millivolt, volt},
-    electrical_resistance::ohm,
-    temperature_interval::{degree_celsius, kelvin}, // Import from temperature_interval
+    temperature_interval::degree_celsius,
 };
 
 #[test]
@@ -233,13 +228,13 @@ fn test_read_all_measurements() {
     // V_25 = 1.200 V
     // For ADC = 3141:
     // V_TSX = 3141 * 382 μV = 1,199,862 μV = 1199.862 mV
-    // TEMP_DIE = 25 - ((1199.862 - 1200) / 0.0042) ≈ 25 - (-0.138 / 0.0042) ≈ 25 + 32.857 ≈ 57.857 °C
+    // TEMP_DIE = 25 - ((1199.862 - 1200) / 0.0042) ≈ 25 + 32.857 ≈ 57.857 °C
     assert_relative_eq!(
         measurements.temperatures.ts1.get::<millivolt>(), // Asserting voltage in millivolts
         1199.862,                                         // Expected V_TSX for ADC = 3141
         epsilon = 0.01                                    // Adjust epsilon as needed for precision
     );
-    // Current: CC Reading = 256 * 8.44 uV/LSB = 2160.64 uV = 2.16064 mV
+    // Current: CC Reading = 256 * 8.44 uV/LSB = 2160.64 uV = 2.16064 A = 216.064 mA
     // Assuming RSENSE = 10 mOhm (from protection_config.rs)
     // Current = 2.16064 mV / 10 mOhm = 0.216064 A = 216.064 mA
     assert_relative_eq!(
