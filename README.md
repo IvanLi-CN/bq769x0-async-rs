@@ -1,23 +1,34 @@
-# GX21M15
+# bq769x0-async-rs
 
-This is a GX21M15 driver based on [embedded-hal](https://crates.io/crates/embedded-hal). Support `async` and `sync` features.
+A driver for the BQ769x0 family of battery management system (BMS) ICs, built upon the [embedded-hal](https://crates.io/crates/embedded-hal) traits. This crate provides both `async` and `sync` APIs, making it suitable for a wide range of embedded applications.
 
-You can check out [power-desk](https://github.com/IvanLi-CN/power-desk?tab=readme-ov-file) to see how to use this driver in your project.
+## Features
+
+-   **Datasheet-Driven Development**: Implemented based on the official BQ769x0 datasheet ([`docs/bq76920.pdf`](docs/bq76920.pdf)), ensuring accurate register mappings and behavior.
+-   **`no-std` Compatible**: Designed for embedded environments, with no reliance on the standard library.
+-   **Asynchronous/Synchronous Support**: Offers flexible `async` and `sync` APIs through the `maybe-async-cfg` crate, allowing you to choose the concurrency model that best fits your project.
+-   **`embedded-hal` Compliant**: Seamlessly integrates with the `embedded-hal` ecosystem, ensuring compatibility with various microcontrollers and hardware abstraction layers.
+-   **`bitflags` Integration**: Utilizes the `bitflags` crate for managing register fields and and data types, enhancing readability, maintainability, and type safety when working with hardware registers and status flags.
+-   **`uom` Integration**: Incorporates the `uom` (Units of Measure) crate for handling physical quantities, ensuring type-safe and dimensionally correct calculations for battery parameters like voltage, current, and temperature.
 
 ## Usage
 
-To add the GX21M15 driver to your project, run the following command:
+To add the `bq769x0-async-rs` driver to your project, run one of the following commands:
 
 ```shell
-# sync
-cargo add gx21m15
+# For synchronous operation (default)
+cargo add bq769x0-async-rs
 
-# async
-cargo add gx21m15 --features async
+# For asynchronous operation
+cargo add bq769x0-async-rs --features async
 ```
+
+## Examples
+
+You can find example projects demonstrating the use of this driver in the [`examples/`](examples/) directory. These examples showcase how to initialize the driver, read battery data, and configure protection features on various embedded platforms.
 
 ## License
 
-`gx21m15-rs` is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
+`bq769x0-async-rs` is distributed under the terms of both the MIT License and the Apache License (Version 2.0).
 
 See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for details.
