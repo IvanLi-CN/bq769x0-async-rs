@@ -43,7 +43,7 @@ static_cell = "2.1.0" # Add static_cell dependency
 libm = "0.2.8" # Add libm dependency
 uom = { version = "0.37", default-features = false, features = ["si"] }
 
-bq769x0-async-rs = { version = "0.1.1", path = "../../", features = ["async", "defmt"] }
+bq769x0-async-rs = { version = "*", path = "../../", features = ["async", "defmt"] }
 
 [profile.dev]
 codegen-units = 1

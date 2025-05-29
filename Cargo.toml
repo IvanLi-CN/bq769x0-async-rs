@@ -1,8 +1,8 @@
 [package]
 name = "bq769x0-async-rs"
-version = "0.1.1"
+version = "0.0.0"
 authors = ["Ivan Li <ivanli2048@gmail.com>"]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A BQ769x0 driver based on embedded-hal. Support `async` and `sync` features."
 keywords = ["battery-management", "embedded-hal-driver", "no-std", "bq769x0", "async"]
