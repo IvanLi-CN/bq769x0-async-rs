@@ -3,15 +3,15 @@
 
 use approx::assert_relative_eq;
 use bq769x0_async_rs::{
+    Bq769x0, RegisterAccess,
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
     registers::{self, *},
-    Bq769x0, RegisterAccess,
 };
 use embedded_hal::i2c::{ErrorType, I2c, Operation};
-use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use embedded_hal_mock::eh1::MockError;
+use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use heapless::Vec;
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -1,24 +1,10 @@
-use approx::assert_relative_eq;
-use bq769x0_async_rs::units::ElectricPotential;
-use bq769x0_async_rs::{
-    crc::{CrcMode, Disabled, Enabled},
-    data_types::{CoulombCounter, TemperatureSensorReadings},
-    errors::Error,
-    registers::{Register, SysCtrl1Flags, SysCtrl2Flags, SysStatFlags},
-    Bq769x0, RegisterAccess,
-};
-use core::ops::Deref;
+use bq769x0_async_rs::{Bq769x0, crc::Disabled, registers::Register};
+
 use embedded_hal::i2c::{ErrorType, I2c, Operation};
 use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
-use embedded_hal_mock::eh1::MockError;
-use heapless::Vec;
+
 use std::cell::RefCell;
 use std::rc::Rc;
-use uom::si::{
-    electric_current::milliampere,
-    electric_potential::{millivolt, volt},
-    temperature_interval::degree_celsius,
-};
 
 pub const BQ76920_ADDR: u8 = 0x08;
 
@@ -122,9 +108,6 @@ fn test_read_cell_voltages_bq76920() {
             ],
         ),
         // ADC calibration reads
-        I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN1 as u8], vec![0x00]), // adc_gain_raw = 0
-        I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCOFFSET as u8], vec![0x00]), // adc_offset_signed = 0
-        I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN2 as u8], vec![0x00]), // adc_gain_raw = 0
     ];
     // ADCGAIN = 365 uV/LSB, ADCOFFSET = 0 mV
     let (mut driver, i2c_mock) = create_driver_with_adc_calibration(&expectations);
@@ -132,11 +115,8 @@ fn test_read_cell_voltages_bq76920() {
     assert!(result.is_ok());
     let voltages = result.unwrap();
     for i in 0..5 {
-        assert_relative_eq!(
-            voltages.voltages[i].get::<millivolt>(),
-            3072.0 * 0.365,
-            epsilon = 0.01
-        );
+        // Assert against the raw ADC value
+        assert_eq!(voltages.voltages[i], 3072);
     }
     i2c_mock.done();
 }

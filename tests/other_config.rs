@@ -2,22 +2,19 @@
 #![allow(dead_code)]
 
 use approx::assert_relative_eq;
-use bq769x0_async_rs::units::ElectricCurrent;
 use bq769x0_async_rs::{
+    Bq769x0, RegisterAccess,
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
     registers::{self, *},
-    Bq769x0, RegisterAccess,
 };
 use embedded_hal::i2c::{ErrorType, I2c, Operation};
-use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use embedded_hal_mock::eh1::MockError;
+use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use heapless::Vec;
 use std::cell::RefCell;
 use std::rc::Rc;
-use uom::si::electric_current::milliampere;
-use uom::si::electric_potential::millivolt;
 
 pub const BQ76920_ADDR: u8 = 0x08;
 pub const BQ76930_ADDR: u8 = 0x08; // Default address, can be 0x18
@@ -261,9 +258,9 @@ fn test_set_cell_balancing_bq76940() {
     let (mut driver, i2c_mock) =
         create_bq769x0_driver_disabled_crc::<15>(&expectations, BQ76940_ADDR);
     let mask_value: u16 = 0b00000100_10101011; // Cells 1, 2, 4, 8, 11 (for BQ76940)
-                                               // CELLBAL1: 0b00001011 (CB1, CB2, CB4)
-                                               // CELLBAL2: 0b00000101 (CB6, CB8)
-                                               // CELLBAL3: 0b00000001 (CB11)
+    // CELLBAL1: 0b00001011 (CB1, CB2, CB4)
+    // CELLBAL2: 0b00000101 (CB6, CB8)
+    // CELLBAL3: 0b00000001 (CB11)
 
     let result = driver.set_cell_balancing(mask_value);
     assert_eq!(result, Ok(()));

@@ -9,7 +9,6 @@ A driver for the BQ769x0 family of battery management system (BMS) ICs, built up
 -   **Asynchronous/Synchronous Support**: Offers flexible `async` and `sync` APIs through the `maybe-async-cfg` crate, allowing you to choose the concurrency model that best fits your project.
 -   **`embedded-hal` Compliant**: Seamlessly integrates with the `embedded-hal` ecosystem, ensuring compatibility with various microcontrollers and hardware abstraction layers.
 -   **`bitflags` Integration**: Utilizes the `bitflags` crate for managing register fields and and data types, enhancing readability, maintainability, and type safety when working with hardware registers and status flags.
--   **`uom` Integration**: Incorporates the `uom` (Units of Measure) crate for handling physical quantities, ensuring type-safe and dimensionally correct calculations for battery parameters like voltage, current, and temperature.
 
 ## Usage
 

@@ -2,23 +2,19 @@
 #![allow(dead_code)]
 
 use approx::assert_relative_eq;
-use bq769x0_async_rs::units::{ElectricCurrent, ElectricPotential, ElectricalResistance};
 use bq769x0_async_rs::{
+    Bq769x0, RegisterAccess,
     crc::{CrcMode, Disabled, Enabled},
     data_types::*,
     errors::Error,
     registers::{self, *},
-    Bq769x0, RegisterAccess,
 };
 use embedded_hal::i2c::{ErrorType, I2c, Operation};
-use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use embedded_hal_mock::eh1::MockError;
+use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
 use heapless::Vec;
 use std::cell::RefCell;
 use std::rc::Rc;
-use uom::si::{
-    electric_current::milliampere, electric_potential::millivolt, electrical_resistance::milliohm,
-};
 
 pub const BQ76920_ADDR: u8 = 0x08;
 
@@ -136,18 +132,18 @@ fn test_set_config_basic() {
         sys_ctrl1_flags: registers::SysCtrl1Flags::ADC_EN,
         sys_ctrl2_flags: registers::SysCtrl2Flags::CC_EN,
         temp_sensor_selection: TempSensor::Internal,
-        overvoltage_trip: ElectricPotential::new::<millivolt>(4200.0),
-        undervoltage_trip: ElectricPotential::new::<millivolt>(2800.0),
+        overvoltage_trip: 4200,  // 4200 mV
+        undervoltage_trip: 2800, // 2800 mV
         protection_config: ProtectionConfig {
             rsns_enable: true,
             scd_delay: ScdDelay::Delay70us,
-            scd_limit: ElectricCurrent::new::<milliampere>(60000.0), // 60A
+            scd_limit: 60000, // 60000 mA
             ocd_delay: OcdDelay::Delay10ms,
-            ocd_limit: ElectricCurrent::new::<milliampere>(20000.0), // 20A
+            ocd_limit: 20000, // 20000 mA
             uv_delay: UvOvDelay::Delay1s,
             ov_delay: UvOvDelay::Delay1s,
         },
-        rsense: ElectricalResistance::new::<milliohm>(10.0), // 10mOhm
+        rsense: 10, // 10 mΩ
     };
 
     let expectations = [
@@ -171,13 +167,12 @@ fn test_set_config_basic() {
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN1 as u8], vec![0x00]), // ADCGAIN1 (raw 0)
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCOFFSET as u8], vec![0x00]), // ADCOFFSET (raw 0)
         I2cTransaction::write_read(BQ76920_ADDR, vec![Register::ADCGAIN2 as u8], vec![0x00]), // ADCGAIN2 (raw 0)
-        // OV_TRIP write (4200mV, gain 365uV/LSB, offset 0mV -> raw 11506 -> 0x2CF2 -> 0xCF)
+        // OV_TRIP write (4200mV, assuming gain 365uV/LSB, offset 0mV -> raw 11506 -> 0x2CF2 -> middle 8 bits 0xCF)
         I2cTransaction::write(BQ76920_ADDR, vec![Register::OvTrip as u8, 0xCF]), // OV_TRIP (4200mV -> 0xCF)
-        // UV_TRIP write (2800mV, gain 365uV/LSB, offset 0mV -> raw 7671 -> 0x1DF7 -> 0xDF)
+        // UV_TRIP write (2800mV, assuming gain 365uV/LSB, offset 0mV -> raw 7671 -> 0x1DF7 -> middle 8 bits 0xDF)
         I2cTransaction::write(BQ76920_ADDR, vec![Register::UvTrip as u8, 0xDF]), // UV_TRIP (2800mV -> 0xDF)
         // PROTECT1 write (RSNS=1, SCD_DELAY=70us, SCD_THRESH=closest to 60A*10mOhm=600mV)
-        // SCD_THRESH for RSNS=1: [44, 67, 89, 111, 133, 155, 178, 200] mV
-        // 600mV is far, so it will pick 200mV (bits 7)
+        // SCD_THRESH for RSNS=1: [44, 67, 89, 111, 133, 155, 178, 200] mV. Closest to 600mV is 200mV (bits 7).
         I2cTransaction::write(
             BQ76920_ADDR,
             vec![
@@ -189,8 +184,7 @@ fn test_set_config_basic() {
             ],
         ), // SCD_DELAY_70US (0b00), SCD_THRESH (0b111 for 200mV)
         // PROTECT2 write (OCD_DELAY=10ms, OCD_THRESH=closest to 20A*10mOhm=200mV)
-        // OCD_THRESH for RSNS=1: [17, 22, 28, 33, 39, 44, 50, 56, 61, 67, 72, 78, 83, 89, 94, 100] mV
-        // 200mV is far, so it will pick 100mV (bits 15)
+        // OCD_THRESH for RSNS=1: [17, 22, 28, 33, 39, 44, 50, 56, 61, 67, 72, 78, 83, 89, 94, 100] mV. Closest to 200mV is 100mV (bits 15).
         I2cTransaction::write(
             BQ76920_ADDR,
             vec![Register::PROTECT2 as u8, (0b000 << 4) | 0b1111],

@@ -1,32 +1,30 @@
-# 重构计划：移除 tests/common.rs 依赖
+# 移除 uom 库计划
 
-## 目标
+根据对嵌入式硬件驱动 crate 的常见实践、对本项目的分析以及 BQ76920 数据手册的查阅，决定移除 `uom`（Units Of Measurement）库，并使用适合嵌入式环境的原始数值类型。
 
-重构测试代码，消除对 `tests/common.rs` 文件的依赖，并最终删除该文件。
+## 移除步骤
 
-## 计划步骤
+1. **移除 `uom` 依赖：** 从 `Cargo.toml` 中移除 `uom` 依赖项。
+2. **删除 `src/units.rs` 文件：** 删除专门用于定义 `uom` 单位的 `src/units.rs` 文件。
+3. **修改 `src/data_types.rs`：** 将其中使用 `uom` 单位类型的地方替换为原始数值类型，并在注释中明确单位和缩放因子。
+    * **电芯电压：** 使用 `u16` 或 `u32` 存储原始 14 位 ADC 值，或转换为以微伏 (μV) 为单位的 `u32`。
+    * **电流：** 使用 `i16` 或 `i32` 存储原始 16 位库仑计数器值，或转换为以微伏 (μV) 为单位的跨感应电阻电压 (`i32`)。电流计算结果存储为以毫安 (mA) 或微安 (μA) 为单位的整数。
+    * **温度：** 转换为以厘摄氏度 (0.01 °C) 或毫摄氏度 (0.001 °C) 为单位的整数。
+    * **总电压：** 存储为以毫伏 (mV) 为单位的 `u16` 或 `u32`。
+    * **原始寄存器值：** 根据需要使用 `i16` 或 `u16`。
+4. **修改 `src/lib.rs`：**
+    * 移除 `extern crate uom;` 声明。
+    * 将所有使用 `uom` 单位类型的地方替换为上述确定的原始数值类型。
+    * 修改相关的计算和转换逻辑，直接使用原始数值和查阅数据手册得到的比例因子进行计算，并确保单位的正确性。在必要的地方添加注释说明单位和缩放因子。
+5. **更新测试文件并确保通过：** 修改使用 `uom` 的测试用例，根据新的数据类型调整断言。**重要提示：测试用例的逻辑不应修改，仅调整数据类型和断言以适应代码变化，并确保所有测试通过。**
+6. **更新文档和示例：** 检查 `README.md` 和 `examples/` 目录，移除或修改与 `uom` 相关的内容，并更新数据类型的说明。
 
-1. **分析依赖**: 确定依赖 `tests/common.rs` 的文件：
-    * `tests/status_monitor.rs`
-    * `tests/protection_config.rs`
-    * `tests/other_config.rs`
-    * `tests/init_basic.rs`
-2. **修改测试文件**: 针对每个依赖文件，进行以下修改：
-    * 移除 `#[path = "common.rs"] mod common;` 引用。
-    * 移除所有对 `common::` 前缀的引用。
-    * 直接使用 `embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};`。
-    * 将 `tests/common.rs` 中 `MockI2c` 的功能（创建 mock、验证事务）直接在每个测试文件中实现或使用 `embedded_hal_mock` 提供的功能替代。
-    * 将 `tests/common.rs` 中的 helper 函数 (`create_driver_with_adc_calibration`, `create_bq769x0_driver_disabled_crc`) 的逻辑直接整合到测试用例中，或者在每个测试文件中重新实现这些 helper 函数（如果它们足够通用且不违反您的意图）。
-    * 将常量 `BQ76920_ADDR` 直接定义在每个测试文件中。
-3. **逐步测试**: 每修改一个文件后，运行 `cargo test` 确保测试通过。
-4. **修复错误**: 如果测试失败，根据错误信息调整代码，直到测试通过。
-5. **删除 common.rs**: 在所有依赖都移除且测试通过后，删除 `tests/common.rs` 文件。
-6. **最终验证**: 再次运行 `cargo test` 确认整个项目测试通过。
+## 影响范围
 
-## 实施说明
-
-* 在修改每个测试文件时，需要仔细检查并替换所有对 `tests/common.rs` 中定义的函数、结构体和常量的引用。
-* `MockI2c` 的实现需要根据 `embedded_hal_mock` 库的用法进行调整。
-* Helper 函数的逻辑需要根据具体测试用例的需求进行整合或重新实现。
-* 在每个文件修改完成后，立即运行 `cargo test` 进行验证，以便及时发现和修复问题。
-* 在删除 `tests/common.rs` 之前，务必确保所有测试文件都已成功重构并通过测试。
+* `Cargo.toml`
+* `src/units.rs`
+* `src/data_types.rs`
+* `src/lib.rs`
+* 测试文件 (可能包括 `tests/binrw_support.rs`)
+* 文档 (`README.md`)
+* 示例 (`examples/`)

@@ -18,7 +18,6 @@ use bq769x0_async_rs::{
     registers::{
         Register, SysCtrl2Flags, SysStatFlags,
     },
-    units::ElectricalResistance,
 };
 
 bind_interrupts!(struct Irqs {
@@ -76,7 +75,7 @@ async fn main(_spawner: Spawner) {
     info!("BQ76920 initialization complete.");
 
     // --- Main Loop for Data Acquisition ---
-    let sense_resistor = ElectricalResistance::new::<uom::si::electrical_resistance::milliohm>(3.0); // Your sense resistor value in milliOhms
+    let sense_resistor_m_ohm: u32 = 3; // Your sense resistor value in milliOhms
 
     loop {
         info!("--- Reading BQ76920 Data ---");
@@ -92,18 +91,29 @@ async fn main(_spawner: Spawner) {
         }
         info!("CC_EN enable attempt complete.");
 
+        // Read ADC calibration values
+        let (adc_gain_uv_per_lsb, adc_offset_mv) = match bq.read_adc_calibration().await {
+            Ok(cal) => cal,
+            Err(e) => {
+                error!("Failed to read ADC calibration: {:?}", e);
+                // Use default calibration values if reading fails
+                (365, 0) // Default values from datasheet
+            }
+        };
+        info!("ADC Calibration: Gain={} uV/LSB, Offset={} mV", adc_gain_uv_per_lsb, adc_offset_mv);
+
         // Read Cell Voltages
         match bq.read_cell_voltages().await {
-            Ok(voltages) => {
-                info!("Cell Voltages (mV):");
+            Ok(cell_voltages) => {
+                info!("Cell Voltages:");
                 // BQ76920 supports up to 5 cells
-                for _i in 0..5 {
-                    // Get voltage in millivolts as i32 for printing
-                    info!(
-                        "  Cell {}: {} mV",
-                        _i + 1,
-                        voltages.voltages[_i].get::<uom::si::electric_potential::millivolt>()
-                    );
+                for i in 0..NUM_CELLS {
+                    let raw_voltage = cell_voltages.voltages[i];
+                    // Convert raw ADC to mV using calibration values
+                    // Datasheet formula: V(cell) = GAIN * ADC(cell) + OFFSET
+                    // V(cell) in mV = (GAIN_uV_per_LSB * raw_adc / 1000) + OFFSET_mV
+                    let voltage_mv = (adc_gain_uv_per_lsb as i32 * raw_voltage as i32 / 1000) + adc_offset_mv as i32;
+                    info!("  Cell {}: {} mV (raw {})", i + 1, voltage_mv, raw_voltage);
                 }
             }
             Err(e) => {
@@ -113,11 +123,8 @@ async fn main(_spawner: Spawner) {
 
         // Read Pack Voltage
         match bq.read_pack_voltage().await {
-            Ok(voltage) => {
-                info!(
-                    "Pack Voltage: {} mV",
-                    voltage.get::<uom::si::electric_potential::millivolt>()
-                );
+            Ok(pack_voltage_mv) => {
+                info!("Pack Voltage: {} mV", pack_voltage_mv);
             }
             Err(e) => {
                 error!("Failed to read pack voltage: {:?}", e);
@@ -126,32 +133,33 @@ async fn main(_spawner: Spawner) {
 
         // Read Temperatures
         match bq.read_temperatures().await {
-            Ok(temps) => {
-                if temps.is_thermistor {
-                    info!("Temperatures (0.1 Ohms):");
-                    info!(
-                        "  TS1: {} ({} Ohms)",
-                        temps
-                            .ts1
-                            .get::<uom::si::electric_potential::millivolt>(), // Assuming raw voltage is read
-                        temps
-                            .ts1
-                            .get::<uom::si::electric_potential::millivolt>() // Assuming raw voltage is read
-                            / 10.0 // Assuming conversion factor
-                    );
-                    // BQ76920 only has TS1
-                } else {
-                    info!("Temperatures (deci-Celsius):");
-                    let ts1_millivolt = temps
-                        .ts1
-                        .get::<uom::si::electric_potential::millivolt>();
-                    let ts1_deci_celsius = ts1_millivolt; // Assuming raw millivolt directly represents deci-celsius
-                    let ts1_celsius_f32 = ts1_deci_celsius / 10.0; // Convert deci-celsius to celsius float
+            Ok(raw_temps) => {
+                info!("Temperature Sensor Readings (raw ADC):");
+                info!("  TS1: {} (is_thermistor: {})", raw_temps.ts1, raw_temps.is_thermistor);
+                if let Some(ts2) = raw_temps.ts2 {
+                    info!("  TS2: {}", ts2);
+                }
+                if let Some(ts3) = raw_temps.ts3 {
+                    info!("  TS3: {}", ts3);
+                }
 
-                    info!(
-                        "  TS1 (Die Temp): kelvin_value={}, celsius_manual_f32={}",
-                        ts1_deci_celsius, ts1_celsius_f32
-                    );
+                // Convert raw temperature readings to temperature data
+                // Note: NTC parameters are needed for thermistor conversion,
+                // but for Die Temp, conversion is done internally in data_types.rs
+                match raw_temps.into_temperature_data(None) { // Pass None for NTC params for now
+                    Ok(temps) => {
+                        info!("Temperatures (c°C):");
+                        info!("  TS1: {}", temps.ts1);
+                        if let Some(ts2) = temps.ts2 {
+                            info!("  TS2: {}", ts2);
+                        }
+                        if let Some(ts3) = temps.ts3 {
+                            info!("  TS3: {}", ts3);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to convert raw temperature data: {}", e);
+                    }
                 }
             }
             Err(e) => {
@@ -161,13 +169,9 @@ async fn main(_spawner: Spawner) {
 
         // Read Current
         match bq.read_current().await {
-            Ok(current) => {
-                let current_ma = bq.convert_raw_cc_to_current_ma(current.raw_cc, sense_resistor);
-                info!(
-                    "Raw CC: {}, Current: {} mA",
-                    current.raw_cc,
-                    current_ma.get::<uom::si::electric_current::milliampere>()
-                );
+            Ok(coulomb_counter) => {
+                let current_ma = bq.convert_raw_cc_to_current_ma(coulomb_counter.raw_cc, sense_resistor_m_ohm);
+                info!("Raw CC: {}, Current: {} mA", coulomb_counter.raw_cc, current_ma);
             }
             Err(e) => {
                 error!("Failed to read current: {:?}", e);
