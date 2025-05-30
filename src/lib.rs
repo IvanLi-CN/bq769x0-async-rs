@@ -390,29 +390,38 @@ where
         Ok((adc_gain_uv_per_lsb, adc_offset_mv))
     }
 
-    /// Reads the raw cell voltages (14-bit ADC values) from the VCTXHi and VcTxLo registers.
-    /// Conversion to voltage in mV should be done using the ADC calibration values.
+    /// Reads and converts cell voltages to mV using ADC calibration values.
     pub async fn read_cell_voltages(&mut self) -> Result<CellVoltages<N>, Error<E>>
     where
         Self: RegisterAccess<E>,
     {
+        let (adc_gain_uv_per_lsb, adc_offset_mv) = self.read_adc_calibration().await?;
+
         let start_reg = Register::Vc1Hi;
         let len = N * 2; // Each cell voltage is 2 bytes (Hi and Lo)
-        let raw_data = self.read_registers(start_reg, len).await?;
+        let raw_data_bytes = self.read_registers(start_reg, len).await?;
 
-        let mut cell_voltages = CellVoltages::new();
+        let mut converted_cell_voltages = CellVoltages::new(); // Now expects [i32; N]
 
         for i in 0..N {
-            let hi_byte = raw_data[i * 2];
-            let lo_byte = raw_data[i * 2 + 1];
-            let raw_voltage = (((hi_byte & 0x3f) as u16) << 8) | (lo_byte as u16);
-            cell_voltages.voltages[i] = raw_voltage;
+            let hi_byte = raw_data_bytes[i * 2];
+            let lo_byte = raw_data_bytes[i * 2 + 1];
+            let raw_adc_val = (((hi_byte & 0x3F) as u16) << 8) | (lo_byte as u16);
 
-            #[cfg(feature = "defmt")]
-            defmt::debug!("Cell {}: raw_voltage={}", i + 1, raw_voltage);
+            // Apply conversion: V_cell_mV = (ADC_raw * Gain_uV_per_LSB / 1000) + Offset_mV
+            let converted_mv = (raw_adc_val as i32 * adc_gain_uv_per_lsb as i32) / 1000 + adc_offset_mv as i32;
+            converted_cell_voltages.voltages[i] = converted_mv;
+
+            // #[cfg(feature = "defmt")]
+            // defmt::info!(
+            //     "LIB: Cell {}: raw_adc={}, converted_mv={}",
+            //     i + 1,
+            //     raw_adc_val,
+            //     converted_mv
+            // );
         }
 
-        Ok(cell_voltages)
+        Ok(converted_cell_voltages)
     }
 
     /// Reads the battery pack voltage from the BatHi and BatLo registers.

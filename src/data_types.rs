@@ -53,9 +53,9 @@ mod binrw_option_helpers {
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct CellVoltages<const N: usize> {
-    /// Voltage of cell 1 to 15.
+    /// Voltage of cell 1 to 15, in millivolts (mV).
     /// The number of valid cells depends on the chip model (BQ76920: 5, BQ76930: 10, BQ76940: 15).
-    pub voltages: [u16; N], // Raw 14-bit ADC value (LSB: 382 µV with ADCGAIN=0, or 2.44 mV with ADCGAIN=1)
+    pub voltages: [i32; N], // Converted cell voltage in mV
 }
 
 impl<const N: usize> Default for CellVoltages<N> {
@@ -67,7 +67,7 @@ impl<const N: usize> Default for CellVoltages<N> {
 impl<const N: usize> CellVoltages<N> {
     pub fn new() -> Self {
         Self {
-            voltages: [0u16; N],
+            voltages: [0i32; N], // Initialize with 0 mV
         }
     }
 }
