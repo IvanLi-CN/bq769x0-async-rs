@@ -3,6 +3,7 @@ use binrw::{BinRead, BinWrite};
 use bitflags::bitflags;
 
 #[derive(Clone, Copy, Debug, PartialEq)] // Added Debug and PartialEq for consistency and potential future use
+#[cfg_attr(feature = "defmt", derive(defmt::Format))] // Add defmt::Format for logging
 #[repr(u8)]
 #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(repr = u8), bw(repr = u8))]
 pub enum Register {

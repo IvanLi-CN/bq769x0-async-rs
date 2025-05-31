@@ -9,8 +9,17 @@ pub enum Error<E: PartialEq> {
     I2c(E),
     /// Invalid data received from the chip.
     InvalidData,
-    // Add other specific error types as needed later, e.g.:
-    // UnsupportedFeature,
     /// CRC validation failed.
     Crc,
+    /// Configuration verification failed after writing to the chip.
+    ConfigVerificationFailed {
+        /// The register जेट्टा (jeṭṭā) verification failed.
+        register: crate::registers::Register,
+        /// The expected value of the register.
+        expected: u8,
+        /// The actual value read back from the register.
+        actual: u8,
+    },
+    // Add other specific error types as needed later, e.g.:
+    // UnsupportedFeature,
 }

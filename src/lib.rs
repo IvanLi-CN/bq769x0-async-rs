@@ -917,4 +917,207 @@ where
         }
         closest_bits
     }
+
+    /// Calculates the expected raw 8-bit value for the OV_TRIP or UV_TRIP register.
+    /// `trip_voltage_mv` is the desired trip voltage in mV.
+    /// `adc_gain_uv_per_lsb` and `adc_offset_mv` are from `read_adc_calibration()`.
+    fn calculate_ovuv_trip_raw(
+        trip_voltage_mv: u32,
+        adc_gain_uv_per_lsb: u32,
+        adc_offset_mv: i16,
+    ) -> u8 {
+        // Datasheet formula: TRIP_FULL = ((TRIP_mV - ADCOFFSET_mV) * 1000 μV/mV) / ADCGAIN_μV_per_LSB
+        // Ensure non-negative result before division, then cast to u16 for bitwise operations.
+        let numerator = (trip_voltage_mv as i32 - adc_offset_mv as i32) * 1000;
+        let trip_full = if numerator < 0 || adc_gain_uv_per_lsb == 0 {
+            0 // Avoid division by zero or negative intermediate results leading to large u16
+        } else {
+            (numerator / adc_gain_uv_per_lsb as i32) as u16
+        };
+        // Extract middle 8 bits: (14-bit value >> 4) & 0xFF.
+        // OV_TRIP: upper 2 MSB preset to "10", lower 4 LSB preset to "1000".
+        // UV_TRIP: upper 2 MSB preset to "01", lower 4 LSB preset to "0000".
+        // The raw value written to the register is the middle 8 bits of this 14-bit ADC code.
+        ((trip_full >> 4) & 0xFF) as u8
+    }
+
+    /// Calculates the expected raw 8-bit value for the PROTECT1 register.
+    fn calculate_protect1_raw(config: &ProtectionConfig, rsense_m_ohm: u32) -> u8 {
+        let scd_target_voltage_mv = config.scd_limit * rsense_m_ohm as i32; // mV = mA * mOhm (scaled by 1000 in practice, but for threshold bits it's direct)
+        let scd_threshold_bits =
+            Self::find_closest_scd_threshold_bits(scd_target_voltage_mv, config.rsns_enable);
+
+        let mut protect1_val: u8 = 0;
+        let mut protect1_flags = Protect1Flags::from_bits_truncate(protect1_val);
+        if config.rsns_enable {
+            protect1_flags.insert(Protect1Flags::RSNS);
+        }
+        protect1_val = protect1_flags.bits();
+        protect1_val |= match config.scd_delay {
+            ScdDelay::Delay70us => 0b00 << 3,
+            ScdDelay::Delay100us => 0b01 << 3,
+            ScdDelay::Delay200us => 0b10 << 3,
+            ScdDelay::Delay400us => 0b11 << 3,
+        };
+        protect1_flags = Protect1Flags::from_bits_truncate(protect1_val); // Re-assign to use updated protect1_val
+        protect1_flags.insert(
+            Protect1Flags::from_bits_truncate(scd_threshold_bits) & Protect1Flags::SCD_THRESH_MASK,
+        );
+        protect1_flags.bits()
+    }
+
+    /// Calculates the expected raw 8-bit value for the PROTECT2 register.
+    fn calculate_protect2_raw(config: &ProtectionConfig, rsense_m_ohm: u32) -> u8 {
+        let ocd_target_voltage_mv = config.ocd_limit * rsense_m_ohm as i32;
+        let ocd_threshold_bits =
+            Self::find_closest_ocd_threshold_bits(ocd_target_voltage_mv, config.rsns_enable);
+
+        let mut protect2_val: u8 = 0;
+        protect2_val |= match config.ocd_delay {
+            OcdDelay::Delay10ms => 0b000 << 4,
+            OcdDelay::Delay20ms => 0b001 << 4,
+            OcdDelay::Delay40ms => 0b010 << 4,
+            OcdDelay::Delay80ms => 0b011 << 4,
+            OcdDelay::Delay160ms => 0b100 << 4,
+            OcdDelay::Delay320ms => 0b101 << 4,
+            OcdDelay::Delay640ms => 0b110 << 4,
+            OcdDelay::Delay1280ms => 0b111 << 4,
+        };
+        let mut protect2_flags = Protect2Flags::from_bits_truncate(protect2_val);
+        protect2_flags.insert(
+            Protect2Flags::from_bits_truncate(ocd_threshold_bits) & Protect2Flags::OCD_THRESH_MASK,
+        );
+        protect2_flags.bits()
+    }
+
+    /// Calculates the expected raw 8-bit value for the PROTECT3 register.
+    fn calculate_protect3_raw(config: &ProtectionConfig) -> u8 {
+        let mut protect3_val: u8 = 0;
+        protect3_val |= match config.uv_delay {
+            UvOvDelay::Delay1s => 0b00 << 6,
+            UvOvDelay::Delay2s => 0b01 << 6,
+            UvOvDelay::Delay4s => 0b10 << 6,
+            UvOvDelay::Delay8s => 0b11 << 6,
+        };
+        protect3_val |= match config.ov_delay {
+            UvOvDelay::Delay1s => 0b00 << 4,
+            UvOvDelay::Delay2s => 0b01 << 4,
+            UvOvDelay::Delay4s => 0b10 << 4,
+            UvOvDelay::Delay8s => 0b11 << 4,
+        };
+        protect3_val
+    }
+
+
+    /// Sets the configuration of the BQ769x0 chip and verifies that key registers were written correctly.
+    pub async fn try_apply_config(&mut self, config: &BatteryConfig) -> Result<(), Error<E>> {
+        // Step 1: Apply the configuration by calling the existing set_config
+        self.set_config(config).await?;
+
+        // Step 2: Verify key configuration registers
+        // Read ADC calibration values first, as they are needed for OV/UV trip calculations
+        let (adc_gain, adc_offset) = self.read_adc_calibration().await?;
+
+        // Verify OV_TRIP
+        let expected_ov_trip_raw =
+            Self::calculate_ovuv_trip_raw(config.overvoltage_trip, adc_gain, adc_offset);
+        let actual_ov_trip_raw = self.read_register(Register::OvTrip).await?;
+        if actual_ov_trip_raw != expected_ov_trip_raw {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::OvTrip,
+                expected: expected_ov_trip_raw,
+                actual: actual_ov_trip_raw,
+            });
+        }
+
+        // Verify UV_TRIP
+        let expected_uv_trip_raw =
+            Self::calculate_ovuv_trip_raw(config.undervoltage_trip, adc_gain, adc_offset);
+        let actual_uv_trip_raw = self.read_register(Register::UvTrip).await?;
+        if actual_uv_trip_raw != expected_uv_trip_raw {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::UvTrip,
+                expected: expected_uv_trip_raw,
+                actual: actual_uv_trip_raw,
+            });
+        }
+
+        // Verify PROTECT1
+        let expected_protect1_raw = Self::calculate_protect1_raw(&config.protection_config, config.rsense);
+        let actual_protect1_raw = self.read_register(Register::PROTECT1).await?;
+        if actual_protect1_raw != expected_protect1_raw {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::PROTECT1,
+                expected: expected_protect1_raw,
+                actual: actual_protect1_raw,
+            });
+        }
+
+        // Verify PROTECT2
+        let expected_protect2_raw = Self::calculate_protect2_raw(&config.protection_config, config.rsense);
+        let actual_protect2_raw = self.read_register(Register::PROTECT2).await?;
+        if actual_protect2_raw != expected_protect2_raw {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::PROTECT2,
+                expected: expected_protect2_raw,
+                actual: actual_protect2_raw,
+            });
+        }
+        
+        // Verify PROTECT3
+        let expected_protect3_raw = Self::calculate_protect3_raw(&config.protection_config);
+        let actual_protect3_raw = self.read_register(Register::PROTECT3).await?;
+        if actual_protect3_raw != expected_protect3_raw {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::PROTECT3,
+                expected: expected_protect3_raw,
+                actual: actual_protect3_raw,
+            });
+        }
+
+        // Verify CC_CFG (expected to be 0x19 as set in set_config)
+        const EXPECTED_CC_CFG: u8 = 0x19;
+        let actual_cc_cfg = self.read_register(Register::CcCfg).await?;
+        if actual_cc_cfg != EXPECTED_CC_CFG {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::CcCfg,
+                expected: EXPECTED_CC_CFG,
+                actual: actual_cc_cfg,
+            });
+        }
+
+        // Verify SYS_CTRL1
+        let expected_sys_ctrl1_bits = config.sys_ctrl1_flags.bits();
+        let actual_sys_ctrl1_bits = self.read_register(Register::SysCtrl1).await?;
+        if actual_sys_ctrl1_bits != expected_sys_ctrl1_bits {
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::SysCtrl1,
+                expected: expected_sys_ctrl1_bits,
+                actual: actual_sys_ctrl1_bits,
+            });
+        }
+
+        // Verify SYS_CTRL2 (base configuration, CHG_ON and DSG_ON are not expected to be set by set_config via BatteryConfig::default)
+        let expected_sys_ctrl2_bits = config.sys_ctrl2_flags.bits(); // Should be SysCtrl2Flags::CC_EN.bits() from default
+        let actual_sys_ctrl2_bits = self.read_register(Register::SysCtrl2).await?;
+        if actual_sys_ctrl2_bits != expected_sys_ctrl2_bits {
+            // This check might be too strict if other bits in SYS_CTRL2 can be legitimately set by other means
+            // or if the default config changes. For now, assume direct correspondence.
+            // We are primarily interested that CC_EN is set and CHG_ON/DSG_ON are NOT set by set_config.
+            // A more robust check might be:
+            // if (actual_sys_ctrl2_bits & SysCtrl2Flags::CC_EN.bits()) != SysCtrl2Flags::CC_EN.bits() ||
+            //    (actual_sys_ctrl2_bits & (SysCtrl2Flags::CHG_ON | SysCtrl2Flags::DSG_ON).bits()) != 0 { ... }
+            // However, for a direct verification of what set_config wrote based on BatteryConfig::default():
+            return Err(Error::ConfigVerificationFailed {
+                register: Register::SysCtrl2,
+                expected: expected_sys_ctrl2_bits,
+                actual: actual_sys_ctrl2_bits,
+            });
+        }
+        
+        // Note: SYS_STAT is cleared by set_config, verifying it would mean expecting 0x00 (or specific flags cleared).
+        // For now, we trust set_config clears it. If specific verification is needed, it can be added.
+
+        Ok(())
+    }
 }
