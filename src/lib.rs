@@ -433,7 +433,8 @@ where
         let lo_byte = raw_data[1];
         let raw_voltage = ((hi_byte as u16) << 8) | (lo_byte as u16);
 
-        let (_adc_gain_uv_per_lsb, _adc_offset_mv) = self.read_adc_calibration().await?;
+        // ADC calibration is not used for pack voltage calculation with nominal LSB, so the call was removed.
+        // let (_adc_gain_uv_per_lsb, _adc_offset_mv) = self.read_adc_calibration().await?;
 
         // Datasheet section 8.3.1.1.6 16-Bit Pack Voltage
         // V(BAT) = 4 × GAIN × ADC(cell) + (#Cells x OFFSET)

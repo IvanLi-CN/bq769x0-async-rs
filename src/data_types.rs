@@ -200,6 +200,12 @@ impl SystemStatus {
     }
 }
 
+impl Default for SystemStatus {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 /// Represents the charge/discharge MOS status.
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite), br(map = Self::new), bw(map = |&s: &Self| s.0.bits()))]
@@ -208,6 +214,12 @@ pub struct MosStatus(pub SysCtrl2Flags);
 impl MosStatus {
     pub fn new(sys_ctrl2_byte: u8) -> Self {
         MosStatus(SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte))
+    }
+}
+
+impl Default for MosStatus {
+    fn default() -> Self {
+        Self::new(0)
     }
 }
 
