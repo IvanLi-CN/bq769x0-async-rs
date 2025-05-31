@@ -409,7 +409,8 @@ where
             let raw_adc_val = (((hi_byte & 0x3F) as u16) << 8) | (lo_byte as u16);
 
             // Apply conversion: V_cell_mV = (ADC_raw * Gain_uV_per_LSB / 1000) + Offset_mV
-            let converted_mv = (raw_adc_val as i32 * adc_gain_uv_per_lsb as i32) / 1000 + adc_offset_mv as i32;
+            let converted_mv =
+                (raw_adc_val as i32 * adc_gain_uv_per_lsb as i32) / 1000 + adc_offset_mv as i32;
             converted_cell_voltages.voltages[i] = converted_mv;
 
             // #[cfg(feature = "defmt")]
@@ -1008,7 +1009,6 @@ where
         protect3_val
     }
 
-
     /// Sets the configuration of the BQ769x0 chip and verifies that key registers were written correctly.
     pub async fn try_apply_config(&mut self, config: &BatteryConfig) -> Result<(), Error<E>> {
         // Step 1: Apply the configuration by calling the existing set_config
@@ -1043,7 +1043,8 @@ where
         }
 
         // Verify PROTECT1
-        let expected_protect1_raw = Self::calculate_protect1_raw(&config.protection_config, config.rsense);
+        let expected_protect1_raw =
+            Self::calculate_protect1_raw(&config.protection_config, config.rsense);
         let actual_protect1_raw = self.read_register(Register::PROTECT1).await?;
         if actual_protect1_raw != expected_protect1_raw {
             return Err(Error::ConfigVerificationFailed {
@@ -1054,7 +1055,8 @@ where
         }
 
         // Verify PROTECT2
-        let expected_protect2_raw = Self::calculate_protect2_raw(&config.protection_config, config.rsense);
+        let expected_protect2_raw =
+            Self::calculate_protect2_raw(&config.protection_config, config.rsense);
         let actual_protect2_raw = self.read_register(Register::PROTECT2).await?;
         if actual_protect2_raw != expected_protect2_raw {
             return Err(Error::ConfigVerificationFailed {
@@ -1063,7 +1065,7 @@ where
                 actual: actual_protect2_raw,
             });
         }
-        
+
         // Verify PROTECT3
         let expected_protect3_raw = Self::calculate_protect3_raw(&config.protection_config);
         let actual_protect3_raw = self.read_register(Register::PROTECT3).await?;
@@ -1114,7 +1116,7 @@ where
                 actual: actual_sys_ctrl2_bits,
             });
         }
-        
+
         // Note: SYS_STAT is cleared by set_config, verifying it would mean expecting 0x00 (or specific flags cleared).
         // For now, we trust set_config clears it. If specific verification is needed, it can be added.
 

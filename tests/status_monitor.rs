@@ -95,28 +95,48 @@ pub fn create_bq769x0_driver_disabled_crc<const N: usize>(
 #[test]
 fn test_read_cell_voltages_bq76920() {
     let expectations = [
-        // Vc1Hi/Lo, Vc2Hi/Lo, Vc3Hi/Lo, Vc4Hi/Lo, Vc5Hi/Lo
         I2cTransaction::write_read(
             BQ76920_ADDR,
-            vec![Register::Vc1Hi as u8],
+            vec![Register::ADCGAIN1 as u8],
+            vec![0x00], // ADCGAIN1: bits 3-2 = 00
+        ),
+        I2cTransaction::write_read(
+            BQ76920_ADDR,
+            vec![Register::ADCOFFSET as u8],
+            vec![0x00], // ADCOFFSET: 0mV
+        ),
+        I2cTransaction::write_read(
+            BQ76920_ADDR,
+            vec![Register::ADCGAIN2 as u8],
+            vec![0x00], // ADCGAIN2: bits 7-5 = 000
+        ),
+        I2cTransaction::write_read(
+            BQ76920_ADDR,
+            vec![Register::Vc1Hi as u8], // Start reading from Vc1Hi
             vec![
-                0x0C, 0x00, // Cell 1: 3072 raw (12.00V)
-                0x0C, 0x00, // Cell 2: 3072 raw
-                0x0C, 0x00, // Cell 3: 3072 raw
-                0x0C, 0x00, // Cell 4: 3072 raw
-                0x0C, 0x00, // Cell 5: 3072 raw
+                0x0C, 0x00, // Cell 1: 3072 raw ADC
+                0x0C, 0x00, // Cell 2: 3072 raw ADC
+                0x0C, 0x00, // Cell 3: 3072 raw ADC
+                0x0C, 0x00, // Cell 4: 3072 raw ADC
+                0x0C, 0x00, // Cell 5: 3072 raw ADC
             ],
         ),
-        // ADC calibration reads
     ];
-    // ADCGAIN = 365 uV/LSB, ADCOFFSET = 0 mV
+    // With ADCGAIN1=0x00, ADCOFFSET=0x00, ADCGAIN2=0x00:
+    // adc_gain_raw = 0
+    // adc_gain_uv_per_lsb = 365 + 0 = 365 uV/LSB
+    // adc_offset_mv = 0 mV
+    // Converted voltage for raw 3072 = (3072 * 365) / 1000 + 0 = 1121.28 mV, which is 1121 mV as i32.
     let (mut driver, i2c_mock) = create_driver_with_adc_calibration(&expectations);
     let result = driver.read_cell_voltages();
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "read_cell_voltages failed: {:?}",
+        result.err()
+    );
     let voltages = result.unwrap();
     for i in 0..5 {
-        // Assert against the raw ADC value
-        assert_eq!(voltages.voltages[i], 3072);
+        assert_eq!(voltages.voltages[i], 1121); // Assert against the calculated mV value
     }
     i2c_mock.done();
 }
