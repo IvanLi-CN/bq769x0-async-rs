@@ -72,10 +72,10 @@ impl<const N: usize> CellVoltages<N> {
     }
 }
 
-/// Represents the measured temperatures.
+/// Represents the raw ADC readings from temperature sensors.
 #[derive(Debug, Copy, Clone, PartialEq)]
-#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
-pub struct TemperatureSensorReadings {
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))] // Keep binrw for raw ADC if needed elsewhere
+pub struct RawTemperatureAdcReadings {
     /// Voltage from TS1 sensor (if external thermistor) or Die Temperature (if internal).
     pub ts1: u16, // Raw 14-bit ADC value (LSB: 382 µV)
 
@@ -93,14 +93,14 @@ pub struct TemperatureSensorReadings {
     pub is_thermistor: bool,
 }
 
-impl Default for TemperatureSensorReadings {
+impl Default for RawTemperatureAdcReadings {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TemperatureSensorReadings {
-    /// Creates a new instance of `TemperatureSensorReadings` with default values.
+impl RawTemperatureAdcReadings {
+    /// Creates a new instance of `RawTemperatureAdcReadings` with default values.
     pub fn new() -> Self {
         Self {
             ts1: 0u16,
@@ -109,45 +109,47 @@ impl TemperatureSensorReadings {
             is_thermistor: false,
         }
     }
+}
 
-    /// Converts the raw sensor voltage readings into temperature data.
-    /// Requires NTC thermistor parameters if the readings are in thermistor mode.
-    pub fn into_temperature_data(
-        &self,
-        ntc_params: Option<&NtcParameters>,
-    ) -> Result<TemperatureData, &'static str> {
-        if self.is_thermistor {
-            if ntc_params.is_none() {
-                return Err("NTC parameters are required for thermistor readings");
-            }
-            Err("Lookup table implementation is pending")
-        } else {
-            let v_25_uv = 1_200_000; // Voltage at 25°C for internal sensor, unit: µV
-            let lsb_uv = 382; // ADC LSB for temperature sensors, unit: µV
-            let divisor_uv_per_ccc = 42; // Divisor for internal sensor temperature calculation, unit: µV / (0.01 °C)
-
-            let v_ts1_uv = self.ts1 as i32 * lsb_uv;
-            let temp_diff_ts1_uv = v_ts1_uv - v_25_uv;
-            let ts1_temp_cc = 2500 - (temp_diff_ts1_uv / divisor_uv_per_ccc); // Temperature, unit: 0.01 °C
-
-            let ts2_temp_cc = self.ts2.map(|raw_adc| {
-                let v_ts2_uv = raw_adc as i32 * lsb_uv;
-                let temp_diff_ts2_uv = v_ts2_uv - v_25_uv;
-                2500 - (temp_diff_ts2_uv / divisor_uv_per_ccc)
-            });
-
-            let ts3_temp_cc = self.ts3.map(|raw_adc| {
-                let v_ts3_uv = raw_adc as i32 * lsb_uv;
-                let temp_diff_ts3_uv = v_ts3_uv - v_25_uv;
-                2500 - (temp_diff_ts3_uv / divisor_uv_per_ccc)
-            });
-
-            Ok(TemperatureData {
-                ts1: ts1_temp_cc as i16,
-                ts2: ts2_temp_cc.map(|t| t as i16),
-                ts3: ts3_temp_cc.map(|t| t as i16),
-            })
+/// Converts raw ADC temperature readings into physical temperature data.
+/// Requires NTC thermistor parameters if the readings are in thermistor mode.
+pub fn convert_raw_adc_to_temperature_data(
+    raw_readings: &RawTemperatureAdcReadings,
+    ntc_params: Option<&NtcParameters>,
+) -> Result<TemperatureData, &'static str> {
+    if raw_readings.is_thermistor {
+        if ntc_params.is_none() {
+            return Err("NTC parameters are required for thermistor readings");
         }
+        // TODO: Implement NTC lookup table or Steinhart-Hart equation
+        Err("External NTC thermistor conversion (lookup table/Steinhart-Hart) is pending")
+    } else {
+        // Internal die temperature sensor calculation
+        let v_25_uv = 1_200_000; // Voltage at 25°C for internal sensor, unit: µV
+        let lsb_uv = 382; // ADC LSB for temperature sensors, unit: µV
+        let divisor_uv_per_ccc = 42; // Divisor for internal sensor temperature calculation, unit: µV / (0.01 °C)
+
+        let v_ts1_uv = raw_readings.ts1 as i32 * lsb_uv;
+        let temp_diff_ts1_uv = v_ts1_uv - v_25_uv;
+        let ts1_temp_cc = 2500 - (temp_diff_ts1_uv / divisor_uv_per_ccc); // Temperature, unit: 0.01 °C
+
+        let ts2_temp_cc = raw_readings.ts2.map(|raw_adc| {
+            let v_ts2_uv = raw_adc as i32 * lsb_uv;
+            let temp_diff_ts2_uv = v_ts2_uv - v_25_uv;
+            2500 - (temp_diff_ts2_uv / divisor_uv_per_ccc)
+        });
+
+        let ts3_temp_cc = raw_readings.ts3.map(|raw_adc| {
+            let v_ts3_uv = raw_adc as i32 * lsb_uv;
+            let temp_diff_ts3_uv = v_ts3_uv - v_25_uv;
+            2500 - (temp_diff_ts3_uv / divisor_uv_per_ccc)
+        });
+
+        Ok(TemperatureData {
+            ts1: ts1_temp_cc as i16,
+            ts2: ts2_temp_cc.map(|t| t as i16),
+            ts3: ts3_temp_cc.map(|t| t as i16),
+        })
     }
 }
 
@@ -172,11 +174,18 @@ pub struct TemperatureData {
     pub ts3: Option<i16>, // Temperature from TS3, unit: 0.01 °C
 }
 
-/// Represents the measured pack current from the Coulomb Counter.
+/// Represents the raw ADC value from the Coulomb Counter.
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
-pub struct CoulombCounter {
+pub struct RawCoulombCounterAdc {
     pub raw_cc: i16, // Raw Coulomb Counter ADC value (LSB: 8.44 µV). Current (mA) = raw_cc * 8.44 / Rsense (mΩ)
+}
+
+/// Represents the measured pack current.
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))] // If direct serialization of physical value is needed
+pub struct CurrentMeasurement {
+    pub current_ma: i32, // Measured current, unit: mA
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -316,8 +325,9 @@ impl Default for BatteryConfig {
 #[cfg_attr(feature = "binrw", derive(BinRead, BinWrite))]
 pub struct Bq76920Measurements<const N: usize> {
     pub cell_voltages: CellVoltages<N>,
-    pub temperatures: TemperatureSensorReadings,
-    pub current: i32, // Measured current, unit: mA
+    pub temperatures: TemperatureData, // Changed from TemperatureSensorReadings to directly hold converted data
+    pub current_ma: i32, // Changed from `current: i32` to be more explicit
+    pub is_thermistor_mode: bool, // Indicates if temperature sensing was using external thermistors
     pub system_status: SystemStatus,
     pub mos_status: MosStatus,
 }
@@ -326,8 +336,13 @@ impl<const N: usize> Default for Bq76920Measurements<N> {
     fn default() -> Self {
         Self {
             cell_voltages: CellVoltages::new(),
-            temperatures: TemperatureSensorReadings::new(),
-            current: 0i32,
+            temperatures: TemperatureData { // Default to 0.01°C values
+                ts1: 0,
+                ts2: None,
+                ts3: None,
+            },
+            current_ma: 0i32,
+            is_thermistor_mode: false, // Default to internal sensor mode
             system_status: SystemStatus::new(0),
             mos_status: MosStatus::new(0),
         }

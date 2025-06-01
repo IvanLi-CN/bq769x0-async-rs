@@ -18,22 +18,25 @@ pub mod data_types;
 pub mod errors;
 
 pub use data_types::{
-    BatteryConfig, Bq76920Measurements, CellVoltages, CoulombCounter, MosStatus, OcdDelay,
+    BatteryConfig, Bq76920Measurements, CellVoltages, /*CoulombCounter,*/ MosStatus, OcdDelay,
     ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureData,
-    TemperatureSensorReadings, UvOvDelay,
+    /*TemperatureSensorReadings,*/ RawTemperatureAdcReadings, RawCoulombCounterAdc, NtcParameters, CurrentMeasurement, // Added NtcParameters
+    UvOvDelay,
 };
 use errors::Error;
 
 pub use crc::{CrcMode, Disabled, Enabled, calculate_crc};
 
 /// BQ769x0 driver
-pub struct Bq769x0<I2C, M: CrcMode, const N: usize>
+pub struct Bq769x0<I2C, M: CrcMode, const N: usize> // N is number of cells
 where
     I2C: I2c,
 {
     address: u8,
     i2c: I2C,
     _crc_mode: core::marker::PhantomData<M>,
+    sense_resistor_m_ohm: u32, // Added to store sense resistor value in mOhms
+    ntc_parameters: Option<NtcParameters>, // Added to store NTC parameters
 }
 
 #[maybe_async_cfg::maybe(
@@ -84,11 +87,20 @@ where
     ///
     /// * `i2c` - The I2C peripheral.
     /// * `address` - The I2C address of the BQ769x0 chip.
-    pub fn new_without_crc(i2c: I2C, address: u8) -> Self {
+    /// * `sense_resistor_m_ohm` - Value of the sense resistor in milliOhms.
+    /// * `ntc_parameters` - Optional NTC thermistor parameters.
+    pub fn new_without_crc(
+        i2c: I2C,
+        address: u8,
+        sense_resistor_m_ohm: u32,
+        ntc_parameters: Option<NtcParameters>,
+    ) -> Self {
         Self {
             address,
             i2c,
             _crc_mode: core::marker::PhantomData,
+            sense_resistor_m_ohm,
+            ntc_parameters,
         }
     }
 }
@@ -163,11 +175,20 @@ where
     ///
     /// * `i2c` - The I2C peripheral.
     /// * `address` - The I2C address of the BQ769x0 chip.
-    pub fn new(i2c: I2C, address: u8) -> Self {
+    /// * `sense_resistor_m_ohm` - Value of the sense resistor in milliOhms.
+    /// * `ntc_parameters` - Optional NTC thermistor parameters.
+    pub fn new(
+        i2c: I2C,
+        address: u8,
+        sense_resistor_m_ohm: u32,
+        ntc_parameters: Option<NtcParameters>,
+    ) -> Self {
         Self {
             address,
             i2c,
             _crc_mode: core::marker::PhantomData,
+            sense_resistor_m_ohm,
+            ntc_parameters,
         }
     }
 }
@@ -460,112 +481,89 @@ where
     }
 
     /// Reads the temperature sensors (TS1, TS2, TS3 or Die Temp)
-    pub async fn read_temperatures(&mut self) -> Result<TemperatureSensorReadings, Error<E>> {
-        // The number of temperature sensors depends on the chip variant (BQ76920, BQ76930, BQ76940)
-        // and the TEMP_SEL bit in SYS_CTRL1.
-        // For BQ76920, there is one external TS pin (TS1) and internal die temp.
-        // TEMP_SEL = 0: TS1 is Die Temp
-        // TEMP_SEL = 1: TS1 is external thermistor
-
+    /// and converts them to physical units (0.01 °C).
+    pub async fn read_temperatures(&mut self) -> Result<TemperatureData, Error<E>> {
         // Read SYS_CTRL1 to check TEMP_SEL
         let sys_ctrl1_byte = self.read_register(Register::SysCtrl1).await?;
         let temp_sel =
             SysCtrl1Flags::from_bits_truncate(sys_ctrl1_byte).contains(SysCtrl1Flags::TEMP_SEL);
 
-        let mut temperatures = TemperatureSensorReadings::new();
+        let mut raw_adc_readings = RawTemperatureAdcReadings::new();
+        raw_adc_readings.is_thermistor = temp_sel;
 
         // Read TS1
         let ts1_raw_data = self.read_registers(Register::Ts1Hi, 2).await?;
-        let ts1_hi = ts1_raw_data[0];
-        let ts1_lo = ts1_raw_data[1];
-        let ts1_raw = ((ts1_hi as u16) << 8) | (ts1_lo as u16);
-
-        if !temp_sel {
-            // Die Temp
-            // Datasheet section 8.1.2.4 Temperature
-            // V_TSX = ADC(TS) * 382 μV/LSB
-            // Store raw ADC value. Conversion to temperature is done in TemperatureSensorReadings::into_temperature_data.
-            temperatures.ts1 = ts1_raw;
-            temperatures.is_thermistor = false;
-        } else {
-            // External Thermistor
-            // Store raw ADC value. Conversion to resistance/temperature is done in TemperatureSensorReadings::into_temperature_data.
-            temperatures.ts1 = ts1_raw;
-            temperatures.is_thermistor = true;
-        }
+        raw_adc_readings.ts1 = ((ts1_raw_data[0] as u16) << 8) | (ts1_raw_data[1] as u16);
 
         // Handle TS2 and TS3 for BQ76930/40
         if N >= 10 {
             let ts2_raw_data = self.read_registers(Register::Ts2Hi, 2).await?;
-            let ts2_hi = ts2_raw_data[0];
-            let ts2_lo = ts2_raw_data[1];
-            let ts2_raw = ((ts2_hi as u16) << 8) | (ts2_lo as u16);
-
-            if !temp_sel {
-                temperatures.ts2 = Some(ts2_raw); // Store raw ADC value
-            } else {
-                let (adc_gain_uv_per_lsb, _) = self.read_adc_calibration().await?;
-                let _v_tsx_mv = (ts2_raw as f32 // _v_tsx_mv is not used, but calculation kept for reference if needed later
-                    * adc_gain_uv_per_lsb as f32)
-                    / 1000.0;
-                temperatures.ts2 = Some(ts2_raw);
-            }
+            raw_adc_readings.ts2 = Some(((ts2_raw_data[0] as u16) << 8) | (ts2_raw_data[1] as u16));
         }
 
         if N >= 15 {
             let ts3_raw_data = self.read_registers(Register::Ts3Hi, 2).await?;
-            let ts3_hi = ts3_raw_data[0];
-            let ts3_lo = ts3_raw_data[1];
-            let ts3_raw = ((ts3_hi as u16) << 8) | (ts3_lo as u16);
-
-            if !temp_sel {
-                temperatures.ts3 = Some(ts3_raw); // Store raw ADC value
-            } else {
-                let (adc_gain_uv_per_lsb, _) = self.read_adc_calibration().await?;
-                let _v_tsx_mv = (ts3_raw as f32 // _v_tsx_mv is not used, but calculation kept for reference if needed later
-                    * adc_gain_uv_per_lsb as f32)
-                    / 1000.0;
-                temperatures.ts3 = Some(ts3_raw);
-            }
+            raw_adc_readings.ts3 = Some(((ts3_raw_data[0] as u16) << 8) | (ts3_raw_data[1] as u16));
         }
 
-        Ok(temperatures)
+        // Perform conversion using the stored NTC parameters if applicable
+        data_types::convert_raw_adc_to_temperature_data(&raw_adc_readings, self.ntc_parameters.as_ref())
+            .map_err(Error::TemperatureConversion)
     }
 
     /// Reads the current from the Coulomb Counter registers.
-    pub async fn read_current(&mut self) -> Result<CoulombCounter, Error<E>> {
+    /// Returns the current in mA.
+    pub async fn read_current(&mut self) -> Result<i32, Error<E>> {
         let raw_data = self.read_registers(Register::CcHi, 2).await?;
         let hi_byte = raw_data[0];
         let lo_byte = raw_data[1];
         let raw_cc = ((hi_byte as i16) << 8) | (lo_byte as i16);
 
-        Ok(CoulombCounter { raw_cc })
+        // Perform conversion to mA
+        // Datasheet section 8.3.1.1.3 16-Bit CC
+        // Current (mA) = raw_cc * 8.44 / rsense_m_ohm
+        let voltage_0_01uv = raw_cc as i32 * 844; // Work in 0.01 µV
+        let rsense_0_01ohm = self.sense_resistor_m_ohm as i32 * 100; // Convert mΩ to 0.01 Ω
+
+        if rsense_0_01ohm == 0 {
+            #[cfg(feature = "defmt")]
+            defmt::warn!("Rsense is 0, cannot calculate current.");
+            return Ok(0); // Or return an error: Err(Error::InvalidConfiguration("Rsense is zero".into()))
+        }
+        let current_ma = voltage_0_01uv / rsense_0_01ohm;
+
+        #[cfg(feature = "defmt")]
+        defmt::trace!(
+            "Raw CC: {}, Rsense (mOhm): {}, Calculated Current (mA): {}",
+            raw_cc,
+            self.sense_resistor_m_ohm,
+            current_ma
+        );
+        Ok(current_ma)
     }
 
     /// Reads all ADC measurements (cell voltages, pack voltage, temperatures, current).
+    /// All values are returned in physical units.
     pub async fn read_all_measurements(&mut self) -> Result<Bq76920Measurements<N>, Error<E>>
     where
         Self: RegisterAccess<E>,
     {
         let cell_voltages = self.read_cell_voltages().await?;
-        let temperatures = self.read_temperatures().await?;
-        let coulomb_counter = self.read_current().await?;
+        let temperatures_data = self.read_temperatures().await?; // Now returns TemperatureData
+        let current_ma_val = self.read_current().await?; // Now returns i32 (mA)
         let system_status = self.read_status().await?;
         let mos_status = self.read_mos_status().await?;
 
+        // Determine is_thermistor_mode from SYS_CTRL1's TEMP_SEL bit
+        let sys_ctrl1_byte = self.read_register(Register::SysCtrl1).await?;
+        let is_thermistor_mode_flag =
+            SysCtrl1Flags::from_bits_truncate(sys_ctrl1_byte).contains(SysCtrl1Flags::TEMP_SEL);
+
         Ok(Bq76920Measurements {
             cell_voltages,
-            temperatures,
-            current: self.convert_raw_cc_to_current_ma(
-                coulomb_counter.raw_cc,
-                // Use the rsense value from BatteryConfig if available, otherwise use a default.
-                // For now, let's use a placeholder or assume it's passed.
-                // The set_config method takes BatteryConfig, maybe pass rsense from there?
-                // For simplicity in read_all_measurements, let's assume a default rsense or
-                // require it to be set elsewhere before calling this.
-                // For now, using a hardcoded default as in the original code, but with the new type.
-                10u32, // Default Rsense: 10 mΩ
-            ),
+            temperatures: temperatures_data,
+            current_ma: current_ma_val,
+            is_thermistor_mode: is_thermistor_mode_flag,
             system_status,
             mos_status,
         })
@@ -732,44 +730,7 @@ where
         Ok(SysStatFlags::from_bits_truncate(sys_stat_byte).contains(SysStatFlags::OVRD_ALERT))
     }
 
-    /// Converts a raw Coulomb Counter value to current in mA.
-    /// This is a helper function and requires the Rsense value in mΩ.
-    /// Datasheet section 8.3.1.1.3 16-Bit CC
-    /// CC Reading (in μV) = [16-bit 2’s Complement Value] × (8.44 μV/LSB)
-    /// Current (mA) = Voltage_across_Rsense (mV) / Rsense (mΩ)
-    /// Voltage_across_Rsense (mV) = raw_cc * 8.44 μV/LSB / 1000 μV/mV
-    /// Current (mA) = (raw_cc * 8.44 / 1000) / (rsense_m_ohm / 1000)
-    /// Current (mA) = raw_cc * 8.44 / rsense_m_ohm
-    /// To use integer arithmetic, work in 0.01 μV units for precision:
-    /// Voltage_across_Rsense (0.01 μV) = raw_cc * 844
-    /// Current (mA) = (raw_cc * 844) / (rsense_m_ohm * 100)
-    pub fn convert_raw_cc_to_current_ma(
-        &self,
-        raw_cc: i16,
-        rsense_m_ohm: u32, // Rsense value in mΩ
-    ) -> i32 {
-        let voltage_0_01uv = raw_cc as i32 * 844;
-        let rsense_0_01ohm = rsense_m_ohm as i32 * 100; // Convert mΩ to 0.01 Ω for calculation
-
-        // Avoid division by zero
-        if rsense_0_01ohm == 0 {
-            #[cfg(feature = "defmt")]
-            defmt::warn!("Rsense is 0, cannot calculate current.");
-            return 0;
-        }
-
-        let current_ma = voltage_0_01uv / rsense_0_01ohm;
-
-        #[cfg(feature = "defmt")]
-        defmt::info!(
-            "Raw CC: {}, Rsense (mOhm): {}, Current (mA): {}",
-            raw_cc,
-            rsense_m_ohm,
-            current_ma
-        );
-
-        current_ma
-    }
+    // Removed convert_raw_cc_to_current_ma as its logic is now integrated into read_current()
 
     /// Sets the configuration of the BQ769x0 chip based on the provided BatteryConfig.
     pub async fn set_config(&mut self, config: &BatteryConfig) -> Result<(), Error<E>> {

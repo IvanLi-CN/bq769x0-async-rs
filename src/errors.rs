@@ -20,6 +20,8 @@ pub enum Error<E: PartialEq> {
         /// The actual value read back from the register.
         actual: u8,
     },
+    /// An error occurred during temperature conversion.
+    TemperatureConversion(&'static str),
     // Add other specific error types as needed later, e.g.:
     // UnsupportedFeature,
 }
