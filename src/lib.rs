@@ -549,6 +549,7 @@ where
         Self: RegisterAccess<E>,
     {
         let cell_voltages = self.read_cell_voltages().await?;
+        let total_voltage_mv = self.read_pack_voltage().await?; // Read total pack voltage
         let temperatures_data = self.read_temperatures().await?; // Now returns TemperatureData
         let current_ma_val = self.read_current().await?; // Now returns i32 (mA)
         let system_status = self.read_status().await?;
@@ -561,6 +562,7 @@ where
 
         Ok(Bq76920Measurements {
             cell_voltages,
+            total_voltage_mv: total_voltage_mv as i32, // Add total voltage
             temperatures: temperatures_data,
             current_ma: current_ma_val,
             is_thermistor_mode: is_thermistor_mode_flag,
