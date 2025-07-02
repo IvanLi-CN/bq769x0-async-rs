@@ -89,7 +89,7 @@ pub fn create_bq769x0_driver_disabled_crc<const N: usize>(
     address: u8,
 ) -> (Bq769x0<MockI2c, Disabled, N>, MockI2c) {
     let i2c_mock_instance = MockI2c::new(transactions);
-    let driver = Bq769x0::new_without_crc(i2c_mock_instance.clone(), address);
+    let driver = Bq769x0::new_without_crc(i2c_mock_instance.clone(), address, 10, None); // Default 10mΩ sense resistor
     (driver, i2c_mock_instance) // Return the cloned mock for verification
 }
 
@@ -99,7 +99,7 @@ pub fn create_bq769x0_driver_enabled_crc<const N: usize>(
     address: u8,
 ) -> (Bq769x0<MockI2c, Enabled, N>, MockI2c) {
     let i2c_mock_instance = MockI2c::new(transactions);
-    let driver = Bq769x0::new(i2c_mock_instance.clone(), address);
+    let driver = Bq769x0::new(i2c_mock_instance.clone(), address, 10, None); // Default 10mΩ sense resistor
     (driver, i2c_mock_instance) // Return the cloned mock for verification
 }
 

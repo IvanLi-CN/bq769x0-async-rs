@@ -18,9 +18,20 @@ pub mod data_types;
 pub mod errors;
 
 pub use data_types::{
-    BatteryConfig, Bq76920Measurements, CellVoltages, /*CoulombCounter,*/ MosStatus, OcdDelay,
-    ProtectionConfig, ScdDelay, SystemStatus, TempSensor, TemperatureData,
-    /*TemperatureSensorReadings,*/ RawTemperatureAdcReadings, RawCoulombCounterAdc, NtcParameters, CurrentMeasurement, // Added NtcParameters
+    BatteryConfig,
+    Bq76920Measurements,
+    CellVoltages,
+    CurrentMeasurement, // Added NtcParameters
+    /*CoulombCounter,*/ MosStatus,
+    NtcParameters,
+    OcdDelay,
+    ProtectionConfig,
+    RawCoulombCounterAdc,
+    /*TemperatureSensorReadings,*/ RawTemperatureAdcReadings,
+    ScdDelay,
+    SystemStatus,
+    TempSensor,
+    TemperatureData,
     UvOvDelay,
 };
 use errors::Error;
@@ -28,7 +39,8 @@ use errors::Error;
 pub use crc::{CrcMode, Disabled, Enabled, calculate_crc};
 
 /// BQ769x0 driver
-pub struct Bq769x0<I2C, M: CrcMode, const N: usize> // N is number of cells
+pub struct Bq769x0<I2C, M: CrcMode, const N: usize>
+// N is number of cells
 where
     I2C: I2c,
 {
@@ -507,8 +519,11 @@ where
         }
 
         // Perform conversion using the stored NTC parameters if applicable
-        data_types::convert_raw_adc_to_temperature_data(&raw_adc_readings, self.ntc_parameters.as_ref())
-            .map_err(Error::TemperatureConversion)
+        data_types::convert_raw_adc_to_temperature_data(
+            &raw_adc_readings,
+            self.ntc_parameters.as_ref(),
+        )
+        .map_err(Error::TemperatureConversion)
     }
 
     /// Reads the current from the Coulomb Counter registers.
@@ -611,6 +626,15 @@ where
         let sys_ctrl2_byte = self.read_register(Register::SysCtrl2).await?;
         let mut sys_ctrl2_flags = SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte);
         sys_ctrl2_flags.insert(SysCtrl2Flags::DSG_ON);
+        self.write_register(Register::SysCtrl2, sys_ctrl2_flags.bits())
+            .await
+    }
+
+    /// Disables discharging by clearing the DSG_ON bit in SYS_CTRL2.
+    pub async fn disable_discharging(&mut self) -> Result<(), Error<E>> {
+        let sys_ctrl2_byte = self.read_register(Register::SysCtrl2).await?;
+        let mut sys_ctrl2_flags = SysCtrl2Flags::from_bits_truncate(sys_ctrl2_byte);
+        sys_ctrl2_flags.remove(SysCtrl2Flags::DSG_ON);
         self.write_register(Register::SysCtrl2, sys_ctrl2_flags.bits())
             .await
     }

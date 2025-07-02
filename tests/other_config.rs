@@ -91,7 +91,7 @@ pub fn create_bq769x0_driver_disabled_crc<const N: usize>(
     address: u8,
 ) -> (Bq769x0<MockI2c, Disabled, N>, MockI2c) {
     let i2c_mock_instance = MockI2c::new(transactions);
-    let driver = Bq769x0::new_without_crc(i2c_mock_instance.clone(), address);
+    let driver = Bq769x0::new_without_crc(i2c_mock_instance.clone(), address, 10, None); // Default 10mΩ sense resistor
     (driver, i2c_mock_instance) // Return the cloned mock for verification
 }
 
@@ -124,7 +124,7 @@ fn create_driver_with_adc_calibration(
     }
 
     let i2c_mock = MockI2c::new(&full_expectations);
-    let driver = Bq769x0::new_without_crc(i2c_mock.clone(), BQ76920_ADDR);
+    let driver = Bq769x0::new_without_crc(i2c_mock.clone(), BQ76920_ADDR, 10, None); // Default 10mΩ sense resistor
     (driver, i2c_mock) // Return a new mock for verification
 }
 
@@ -219,6 +219,23 @@ fn test_enable_discharging() {
     let (mut driver, i2c_mock) =
         create_bq769x0_driver_disabled_crc::<5>(&expectations, BQ76920_ADDR);
     let result = driver.enable_discharging();
+    assert_eq!(result, Ok(()));
+    i2c_mock.done();
+}
+
+#[test]
+fn test_disable_discharging() {
+    let expectations = [
+        I2cTransaction::write_read(
+            BQ76920_ADDR,
+            vec![Register::SysCtrl2 as u8],
+            vec![registers::SysCtrl2Flags::DSG_ON.bits()],
+        ), // Read current SYS_CTRL2 (DSG_ON is set)
+        I2cTransaction::write(BQ76920_ADDR, vec![Register::SysCtrl2 as u8, 0x00]), // Write SYS_CTRL2 with DSG_ON cleared
+    ];
+    let (mut driver, i2c_mock) =
+        create_bq769x0_driver_disabled_crc::<5>(&expectations, BQ76920_ADDR);
+    let result = driver.disable_discharging();
     assert_eq!(result, Ok(()));
     i2c_mock.done();
 }

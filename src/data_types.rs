@@ -327,7 +327,7 @@ pub struct Bq76920Measurements<const N: usize> {
     pub cell_voltages: CellVoltages<N>,
     pub total_voltage_mv: i32, // Added: Total voltage of the BQ76920 pack
     pub temperatures: TemperatureData, // Changed from TemperatureSensorReadings to directly hold converted data
-    pub current_ma: i32, // Changed from `current: i32` to be more explicit
+    pub current_ma: i32,               // Changed from `current: i32` to be more explicit
     pub is_thermistor_mode: bool, // Indicates if temperature sensing was using external thermistors
     pub system_status: SystemStatus,
     pub mos_status: MosStatus,
@@ -338,7 +338,8 @@ impl<const N: usize> Default for Bq76920Measurements<N> {
         Self {
             cell_voltages: CellVoltages::new(),
             total_voltage_mv: 0, // Default to 0
-            temperatures: TemperatureData { // Default to 0.01°C values
+            temperatures: TemperatureData {
+                // Default to 0.01°C values
                 ts1: 0,
                 ts2: None,
                 ts3: None,
