@@ -111,6 +111,14 @@ async fn main(_spawner: Spawner) {
         info!("Cell balancing enabled: mask = 0b{:05b}", balancing_mask);
     }
 
+    // // --- Enter Ship Mode ---
+    // info!("Entering ship mode...");
+    // if let Err(e) = bq.enter_ship_mode().await {
+    //     error!("Failed to enter ship mode: {:?}", e);
+    // } else {
+    //     info!("Ship mode entered successfully.");
+    // }
+
     // --- Main Loop for Data Acquisition ---
     loop {
         info!("--- Reading BQ76920 Data ---");
