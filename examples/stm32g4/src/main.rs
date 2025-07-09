@@ -7,8 +7,9 @@ use embassy_executor::Spawner;
 use embassy_stm32::{
     bind_interrupts,
     i2c::{self, Config, I2c},
-    peripherals::I2C1,
+    peripherals::{I2C1, UCPD1},
     time::Hertz,
+    ucpd::{self, CcPull, Config as UcpdConfig, Ucpd},
 };
 use embassy_time::{Duration, Timer};
 use {defmt_rtt as _, panic_probe as _};
@@ -22,12 +23,35 @@ use bq769x0_async_rs::{
 bind_interrupts!(struct Irqs {
     I2C1_EV => i2c::EventInterruptHandler<I2C1>;
     I2C1_ER => i2c::ErrorInterruptHandler<I2C1>;
+    UCPD1 => ucpd::InterruptHandler<UCPD1>;
 });
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("Hello from STM32G431CB!");
+
+    // --- USB-C Rd Pull-down Configuration ---
+    // Based on embassy official UCPD implementation
+    info!("Configuring USB-C Rd pull-down resistors...");
+
+    // Initialize UCPD peripheral for USB-C CC pin management
+    // For STM32G431CB: CC1=PB6, CC2=PB4 (adjust according to your hardware)
+    let ucpd_config = UcpdConfig::default();
+    let mut ucpd = Ucpd::new(
+        p.UCPD1,
+        Irqs,
+        p.PB6,  // CC1 pin
+        p.PB4,  // CC2 pin
+        ucpd_config,
+    );
+
+    // Configure as sink (UFP) with Rd pull-down resistors (5.1kΩ)
+    // This automatically disables dead battery pull-downs and enables proper Rd
+    ucpd.cc_phy().set_pull(CcPull::Sink);
+
+    info!("USB-C Rd pull-down resistors configured successfully.");
+    info!("Device configured as UFP (Upstream Facing Port) with 5.1kΩ Rd resistors.");
 
     let scl = p.PA15;
     let sda = p.PB7;
