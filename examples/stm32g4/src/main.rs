@@ -433,37 +433,39 @@ async fn main(_spawner: Spawner) {
                     let avg_voltage = total_voltage / valid_cells as i32;
                     info!("  Average voltage: {} mV", avg_voltage);
 
-                    // Sort cells by voltage (highest first) - simple bubble sort
-                    for i in 0..valid_cells {
-                        for j in 0..valid_cells-1-i {
-                            if cell_data[j].0 < cell_data[j+1].0 {
-                                let temp = cell_data[j];
-                                cell_data[j] = cell_data[j+1];
-                                cell_data[j+1] = temp;
-                            }
-                        }
-                    }
-
-                    // Check each adjacent pair of cells for voltage imbalance
+                    // Check each physically adjacent pair of cells for voltage imbalance
                     let mut cells_need_balancing: [(i32, usize); NUM_CELLS] = [(0, 0); NUM_CELLS];
                     let mut balance_candidate_count = 0;
 
-                    // Compare each cell with the next one (sorted by voltage, highest first)
+                    // Compare each cell with its physically adjacent cell (Cell 1 vs Cell 2, Cell 2 vs Cell 3, etc.)
                     for i in 0..valid_cells-1 {
-                        let higher_voltage = cell_data[i].0;
-                        let higher_cell = cell_data[i].1;
-                        let lower_voltage = cell_data[i+1].0;
-                        let lower_cell = cell_data[i+1].1;
-                        let voltage_diff = higher_voltage - lower_voltage;
+                        let cell1_voltage = cell_data[i].0;
+                        let cell1_idx = cell_data[i].1;
+                        let cell2_voltage = cell_data[i+1].0;
+                        let cell2_idx = cell_data[i+1].1;
+
+                        // Calculate voltage difference (absolute value)
+                        let voltage_diff = if cell1_voltage > cell2_voltage {
+                            cell1_voltage - cell2_voltage
+                        } else {
+                            cell2_voltage - cell1_voltage
+                        };
 
                         info!("  Cell {} ({} mV) vs Cell {} ({} mV): diff = {} mV",
-                             higher_cell + 1, higher_voltage, lower_cell + 1, lower_voltage, voltage_diff);
+                             cell1_idx + 1, cell1_voltage, cell2_idx + 1, cell2_voltage, voltage_diff);
 
                         if voltage_diff > balance_threshold_mv {
-                            // The higher voltage cell needs balancing
-                            cells_need_balancing[balance_candidate_count] = (higher_voltage, higher_cell);
+                            // Balance the higher voltage cell
+                            if cell1_voltage > cell2_voltage {
+                                cells_need_balancing[balance_candidate_count] = (cell1_voltage, cell1_idx);
+                                info!("    -> Cell {} needs balancing ({}mV higher than Cell {})",
+                                     cell1_idx + 1, voltage_diff, cell2_idx + 1);
+                            } else {
+                                cells_need_balancing[balance_candidate_count] = (cell2_voltage, cell2_idx);
+                                info!("    -> Cell {} needs balancing ({}mV higher than Cell {})",
+                                     cell2_idx + 1, voltage_diff, cell1_idx + 1);
+                            }
                             balance_candidate_count += 1;
-                            info!("    -> Cell {} needs balancing ({}mV higher)", higher_cell + 1, voltage_diff);
 
                             // Limit to maximum 2 cells
                             if balance_candidate_count >= 2 {
