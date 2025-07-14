@@ -78,7 +78,7 @@ async fn main(_spawner: Spawner) {
     let mut bq = Bq769x0::<_, Enabled, NUM_CELLS>::new(i2c, 0x08, sense_resistor_m_ohm, None);
 
     let battery_config = BatteryConfig {
-        overvoltage_trip: 3600u32,  // Set to 3.6V
+        overvoltage_trip: 3650u32,  // Set to 3.65V
         undervoltage_trip: 2500u32, // Set to 2.5V
         protection_config: ProtectionConfig {
             ocd_limit: 10_000i32,                         // Set to 10A (10_000 mA)
@@ -397,120 +397,127 @@ async fn main(_spawner: Spawner) {
         }
 
         // --- Smart Cell Balancing Management ---
-        // Enable balancing when:
-        // 1. Charging AND battery voltage exceeds 3.2V, OR
-        // 2. Not charging BUT battery voltage exceeds 3.55V
-        // 3. Balance cells with voltage difference > 20mV, max 2 cells simultaneously
+        // New balancing logic:
+        // 1. Check if max-min voltage difference > 10mV
+        // 2. Allow balancing if (charging OR min_voltage > 3300mV)
+        // 3. Compare adjacent cells, balance the higher one
 
-        let balance_start_voltage_charging_mv = 3200; // Start balancing when charging and cells exceed 3.2V
-        let balance_start_voltage_idle_mv = 3550; // Start balancing when not charging and cells exceed 3.55V
-        let balance_threshold_mv = 20; // Balance when voltage difference > 20mV
+        let min_voltage_threshold_mv = 3300; // Minimum voltage threshold for balancing
+        let pack_voltage_diff_threshold_mv = 10; // Pack voltage difference threshold
 
         // Read current cell voltages for balancing analysis
         match bq.read_cell_voltages().await {
             Ok(cell_voltages) => {
                 info!("Battery Status:");
                 info!("  Charging: {}", is_charging);
-                info!("  Balance threshold (charging): {} mV", balance_start_voltage_charging_mv);
-                info!("  Balance threshold (idle): {} mV", balance_start_voltage_idle_mv);
+                info!("  Min voltage threshold: {} mV", min_voltage_threshold_mv);
+                info!("  Pack voltage diff threshold: {} mV", pack_voltage_diff_threshold_mv);
 
-                // Collect all valid cell voltages and calculate average
-                let mut cell_data: [(i32, usize); NUM_CELLS] = [(0, 0); NUM_CELLS];
+                // Display all cell voltages and find min/max
                 let mut valid_cells = 0;
-                let mut total_voltage = 0i32;
+                let mut min_voltage = i32::MAX;
+                let mut max_voltage = 0i32;
 
                 for i in 0..NUM_CELLS {
                     let voltage = cell_voltages.voltages[i];
                     if voltage > 0 { // Only include valid readings
                         info!("  Cell {}: {} mV", i + 1, voltage);
-                        cell_data[valid_cells] = (voltage, i);
-                        total_voltage += voltage;
                         valid_cells += 1;
+                        if voltage < min_voltage {
+                            min_voltage = voltage;
+                        }
+                        if voltage > max_voltage {
+                            max_voltage = voltage;
+                        }
                     }
                 }
 
                 if valid_cells >= 2 {
-                    let avg_voltage = total_voltage / valid_cells as i32;
-                    info!("  Average voltage: {} mV", avg_voltage);
+                    let pack_voltage_diff = max_voltage - min_voltage;
+                    info!("  Pack voltage difference: {} mV (max: {} mV, min: {} mV)",
+                         pack_voltage_diff, max_voltage, min_voltage);
 
-                    // Check each physically adjacent pair of cells for voltage imbalance
-                    let mut cells_need_balancing: [(i32, usize); NUM_CELLS] = [(0, 0); NUM_CELLS];
-                    let mut balance_candidate_count = 0;
+                    // Check if balancing is allowed
+                    let balancing_allowed = pack_voltage_diff > pack_voltage_diff_threshold_mv &&
+                                          (is_charging || min_voltage > min_voltage_threshold_mv);
 
-                    // Compare each cell with its physically adjacent cell (Cell 1 vs Cell 2, Cell 2 vs Cell 3, etc.)
-                    for i in 0..valid_cells-1 {
-                        let cell1_voltage = cell_data[i].0;
-                        let cell1_idx = cell_data[i].1;
-                        let cell2_voltage = cell_data[i+1].0;
-                        let cell2_idx = cell_data[i+1].1;
+                    info!("  Balancing allowed: {} (pack_diff > {}mV: {}, charging_or_min_ok: {})",
+                         balancing_allowed,
+                         pack_voltage_diff_threshold_mv,
+                         pack_voltage_diff > pack_voltage_diff_threshold_mv,
+                         is_charging || min_voltage > min_voltage_threshold_mv);
 
-                        // Calculate voltage difference (absolute value)
-                        let voltage_diff = if cell1_voltage > cell2_voltage {
-                            cell1_voltage - cell2_voltage
-                        } else {
-                            cell2_voltage - cell1_voltage
-                        };
+                    if balancing_allowed {
+                        // Find the highest voltage cells for balancing
+                        let mut cells_need_balancing: [bool; NUM_CELLS] = [false; NUM_CELLS];
+                        let mut balance_candidate_count = 0;
+                        let min_balance_diff_mv = 2; // Minimum voltage difference to trigger balancing
 
-                        info!("  Cell {} ({} mV) vs Cell {} ({} mV): diff = {} mV",
-                             cell1_idx + 1, cell1_voltage, cell2_idx + 1, cell2_voltage, voltage_diff);
+                        // Create a list of valid cells with their voltages and indices
+                        let mut valid_cells: [(usize, i32); NUM_CELLS] = [(0, 0); NUM_CELLS];
+                        let mut valid_count = 0;
 
-                        if voltage_diff > balance_threshold_mv {
-                            // Balance the higher voltage cell
-                            if cell1_voltage > cell2_voltage {
-                                cells_need_balancing[balance_candidate_count] = (cell1_voltage, cell1_idx);
-                                info!("    -> Cell {} needs balancing ({}mV higher than Cell {})",
-                                     cell1_idx + 1, voltage_diff, cell2_idx + 1);
-                            } else {
-                                cells_need_balancing[balance_candidate_count] = (cell2_voltage, cell2_idx);
-                                info!("    -> Cell {} needs balancing ({}mV higher than Cell {})",
-                                     cell2_idx + 1, voltage_diff, cell1_idx + 1);
-                            }
-                            balance_candidate_count += 1;
-
-                            // Limit to maximum 2 cells
-                            if balance_candidate_count >= 2 {
-                                break;
+                        for i in 0..NUM_CELLS {
+                            let voltage = cell_voltages.voltages[i];
+                            if voltage > 0 { // Only include valid readings
+                                valid_cells[valid_count] = (i, voltage);
+                                valid_count += 1;
                             }
                         }
-                    }
 
-                    info!("  Cells needing balancing: {}", balance_candidate_count);
-
-                    if balance_candidate_count > 0 {
-                        // Check if balancing conditions are met
-                        let mut should_balance = false;
-                        let mut high_voltage_cell = 0usize;
-                        let mut high_voltage_value = 0i32;
-
-                        if is_charging {
-                            should_balance = true;
-                            info!("Conditions met for balancing: charging");
-                        } else {
-                            // Check if any cell needing balancing has voltage > 3550mV
-                            for i in 0..balance_candidate_count {
-                                let (voltage, cell_idx) = cells_need_balancing[i];
-                                if voltage > balance_start_voltage_idle_mv {
-                                    should_balance = true;
-                                    high_voltage_cell = cell_idx;
-                                    high_voltage_value = voltage;
-                                    break;
+                        if valid_count >= 2 {
+                            // Sort cells by voltage (highest first) - simple bubble sort for small arrays
+                            for i in 0..valid_count {
+                                for j in 0..valid_count - 1 - i {
+                                    if valid_cells[j].1 < valid_cells[j + 1].1 {
+                                        let temp = valid_cells[j];
+                                        valid_cells[j] = valid_cells[j + 1];
+                                        valid_cells[j + 1] = temp;
+                                    }
                                 }
                             }
 
-                            if should_balance {
-                                info!("Conditions met for balancing: Cell {} voltage {} mV > {} mV",
-                                     high_voltage_cell + 1, high_voltage_value, balance_start_voltage_idle_mv);
+                            info!("  Cells sorted by voltage (highest first):");
+                            for idx in 0..valid_count {
+                                let (cell_idx, voltage) = valid_cells[idx];
+                                info!("    {}. Cell {}: {} mV", idx + 1, cell_idx + 1, voltage);
+                            }
+
+                            // Check if the highest voltage cells need balancing
+                            // Balance cells that are significantly higher than the minimum
+                            let min_cell_voltage = valid_cells[valid_count - 1].1; // Lowest voltage (last after sorting)
+
+                            for idx in 0..valid_count {
+                                let (cell_idx, voltage) = valid_cells[idx];
+                                let voltage_diff = voltage - min_cell_voltage;
+
+                                if voltage_diff >= min_balance_diff_mv && balance_candidate_count < 2 {
+                                    cells_need_balancing[cell_idx] = true;
+                                    balance_candidate_count += 1;
+                                    info!("  Cell {} ({} mV) needs balancing (diff: {} mV > {} mV)",
+                                         cell_idx + 1, voltage, voltage_diff, min_balance_diff_mv);
+                                } else if voltage_diff < min_balance_diff_mv {
+                                    info!("  Cell {} ({} mV) skipped balancing (diff: {} mV < {} mV)",
+                                         cell_idx + 1, voltage, voltage_diff, min_balance_diff_mv);
+                                }
+
+                                if balance_candidate_count >= 2 {
+                                    info!("  Reached maximum 2 cells for balancing");
+                                    break;
+                                }
                             }
                         }
 
-                        if should_balance {
+                        info!("  Cells needing balancing: {}", balance_candidate_count);
 
+                        if balance_candidate_count > 0 {
                             let mut balancing_mask: u16 = 0;
 
-                            for i in 0..balance_candidate_count {
-                                let (voltage, cell_idx) = cells_need_balancing[i];
-                                balancing_mask |= 1 << cell_idx;
-                                info!("  Balancing Cell {}: {} mV", cell_idx + 1, voltage);
+                            for i in 0..NUM_CELLS {
+                                if cells_need_balancing[i] {
+                                    balancing_mask |= 1 << i;
+                                    info!("  Balancing Cell {}: {} mV", i + 1, cell_voltages.voltages[i]);
+                                }
                             }
 
                             info!("Enabling cell balancing: mask = 0b{:05b} ({} cells)", balancing_mask, balance_candidate_count);
@@ -520,27 +527,24 @@ async fn main(_spawner: Spawner) {
                                 info!("Cell balancing enabled successfully.");
                             }
                         } else {
-                            info!("Balancing conditions not met - disabling balancing");
-                            if !is_charging {
-                                info!("  Reason: Not charging and no cell > {} mV", balance_start_voltage_idle_mv);
-                            }
-
+                            info!("No adjacent cells need balancing - disabling balancing");
                             // Disable cell balancing
                             if let Err(e) = bq.set_cell_balancing(0).await {
                                 error!("Failed to disable cell balancing: {:?}", e);
                             } else {
-                                info!("Cell balancing disabled.");
+                                info!("Cell balancing disabled - no adjacent imbalance.");
                             }
                         }
                     } else {
-                        info!("No voltage imbalance detected - disabling balancing");
-                        info!("  All voltage differences <= {} mV", balance_threshold_mv);
+                        info!("Balancing not allowed - disabling balancing");
+                        info!("  Pack voltage diff {} mV <= {} mV OR (not charging AND min voltage {} mV <= {} mV)",
+                             pack_voltage_diff, pack_voltage_diff_threshold_mv, min_voltage, min_voltage_threshold_mv);
 
                         // Disable cell balancing
                         if let Err(e) = bq.set_cell_balancing(0).await {
                             error!("Failed to disable cell balancing: {:?}", e);
                         } else {
-                            info!("Cell balancing disabled - no imbalance.");
+                            info!("Cell balancing disabled - conditions not met.");
                         }
                     }
                 } else {
