@@ -7,6 +7,14 @@ license = "MIT OR Apache-2.0"
 description = "A BQ769x0 driver based on embedded-hal. Support `async` and `sync` features."
 keywords = ["battery-management", "embedded-hal-driver", "no-std", "bq769x0", "async"]
 repository = "https://github.com/IvanLi-CN/bq769x0-async-rs"
+exclude = [
+    "examples/*/target/",
+    "docs/images/",
+    "docs/*.pdf",
+    "target/",
+    ".git/",
+    "*.log"
+]
 
 [dependencies]
 embedded-hal = "1.0.0"
