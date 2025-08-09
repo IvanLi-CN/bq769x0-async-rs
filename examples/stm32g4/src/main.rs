@@ -221,8 +221,8 @@ async fn main(_spawner: Spawner) {
                 pack_voltage_mv = voltage;
                 info!("Pack Voltage: {} mV", pack_voltage_mv);
 
-                // Check if pack voltage is below 17V (17000mV) - allow charging only if needed
-                let pack_voltage_threshold_mv = 17000;
+                // Check if pack voltage is below 18V (18000mV) - allow charging only if needed
+                let pack_voltage_threshold_mv = 18000;
                 let ov_protection_threshold = battery_config.overvoltage_trip as i32;
 
                 if pack_voltage_mv < pack_voltage_threshold_mv {
@@ -402,7 +402,7 @@ async fn main(_spawner: Spawner) {
         // 2. Allow balancing if (charging OR min_voltage > 3300mV)
         // 3. Compare adjacent cells, balance the higher one
 
-        let min_voltage_threshold_mv = 3300; // Minimum voltage threshold for balancing
+        let min_voltage_threshold_mv = 3200; // Minimum voltage threshold for balancing
         let pack_voltage_diff_threshold_mv = 10; // Pack voltage difference threshold
 
         // Read current cell voltages for balancing analysis
