@@ -764,10 +764,8 @@ where
 
         // 1. Calculate target voltage thresholds from current limits and Rsense
         // Voltage (mV) = Current (mA) * Resistance (mΩ)
-        let scd_target_voltage_mv =
-            config.protection_config.scd_limit as i32 * config.rsense as i32;
-        let ocd_target_voltage_mv =
-            config.protection_config.ocd_limit as i32 * config.rsense as i32;
+        let scd_target_voltage_mv = config.protection_config.scd_limit * config.rsense as i32;
+        let ocd_target_voltage_mv = config.protection_config.ocd_limit * config.rsense as i32;
 
         // 2. Find the closest supported voltage thresholds and get their register bit values
         let scd_threshold_bits = Self::find_closest_scd_threshold_bits(
@@ -866,7 +864,7 @@ where
         let mut min_diff = i32::MAX; // Changed to i32
 
         for (i, &threshold) in thresholds.iter().enumerate() {
-            let diff = (target_voltage_mv - threshold as i32).abs();
+            let diff = (target_voltage_mv - threshold).abs();
             if diff < min_diff {
                 // Now i32 < i32
                 min_diff = diff; // Now i32 = i32
@@ -897,7 +895,7 @@ where
         let mut min_diff = i32::MAX; // Changed to i32
 
         for (i, &threshold) in thresholds.iter().enumerate() {
-            let diff = (target_voltage_mv - threshold as i32).abs();
+            let diff = (target_voltage_mv - threshold).abs();
             if diff < min_diff {
                 // Now i32 < i32
                 min_diff = diff; // Now i32 = i32
